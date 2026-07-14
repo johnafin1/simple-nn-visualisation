@@ -1,0 +1,36 @@
+---
+description: C++20 coding conventions for the neural-network core
+globs: **/*.{cpp,h,hpp,cc,hh}
+alwaysApply: false
+---
+
+# C++ Conventions
+
+- **Standard:** C++20. Build with `-Wall -Wextra -Wpedantic`.
+- **Naming:** `PascalCase` types, `snake_case` functions/variables/files, `namespace nn::...`.
+- **const-correctness** everywhere; `[[nodiscard]]` on results that must be used.
+- Prefer `std::span` for non-owning array views (the math layer takes spans).
+
+## Special member functions (the big 6/7)
+
+- **Prefer Rule of Zero:** for types whose members are self-managing (`std::vector`, etc.),
+  declare none of the six special members.
+- **Rule of Five:** only for types that manually own a resource (e.g. a future GPU buffer) —
+  then define dtor + both copy + both move ops. Mark moves `noexcept`.
+- Use `= default` / `= delete` to state intent. Never leave copy/move implicit on a
+  resource-owning type.
+
+## Polymorphism
+
+- Abstract base = pure virtual methods + `virtual ~Base() = default;`.
+- Concrete overrides use `override`; mark `final` when not further derived.
+- Own polymorphic objects via `std::unique_ptr<Base>`; pass by reference/pointer (never by
+  value — avoids slicing).
+- Keep hierarchies shallow (one abstract base, then concretes); prefer composition otherwise.
+
+## Layer paradigm
+
+- `nn::math`: free pure functions only — no classes/state.
+- `nn::core`/`nn::api`: OO. Objects call into `nn::math` for arithmetic.
+
+Full detail + examples: `docs/CPP_CONVENTIONS.md`.

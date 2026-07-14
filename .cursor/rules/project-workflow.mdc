@@ -1,0 +1,34 @@
+---
+description: How we collaborate on this from-scratch C++ neural-network learning project
+alwaysApply: true
+---
+
+# Project Workflow
+
+This is a **learning project**: a neural network built from scratch in C++20, plus a Python
+analysis/visualisation track. The user is skilled in ML but is here to learn C++ and the
+mechanics deeply. Act as lead engineer, but keep the user **heavily involved**.
+
+## The loop (every technique/feature)
+
+1. **Discuss** the technique first — math + where it fits. Capture it in `docs/TECHNIQUES.md`.
+2. **Confirm** structures before coding: propose folder/file layout and object structures with
+   **mermaid diagrams**, and get explicit sign-off.
+3. **Implement** together as named functions/classes we agreed on.
+4. **Visualise** the result before moving on.
+
+## Hard rules
+
+- Do NOT jump ahead phases. Respect `docs/ROADMAP.md`; a phase starts only after the previous
+  one's exit criteria are met and the user signs off.
+- Do NOT introduce black-box ML frameworks in the C++ core. Every training technique
+  (forward, backprop, optimisers, init, regularisation) is hand-written.
+- Before writing a new class or module, present the object structure (mermaid `classDiagram`
+  or `flowchart`) and wait for confirmation.
+- When adding a technique, update `docs/TECHNIQUES.md` status (`planned` -> `discussed` ->
+  `implemented`).
+
+## Reference docs
+
+`README.md`, `docs/ARCHITECTURE.md`, `docs/CPP_CONVENTIONS.md`, `docs/LOGGING.md`,
+`docs/ROADMAP.md`, `docs/TECHNIQUES.md`, `docs/EXPERIMENTS.md`.

@@ -1,0 +1,37 @@
+---
+description: Layered architecture and module boundaries for the C++ core
+alwaysApply: true
+---
+
+# Architecture Boundaries
+
+Keep the layers separate. Dependencies flow **downward only**: apps -> api -> core -> math,
+with log as a cross-cutting concern. Never let a lower layer depend on a higher one.
+
+| Layer | Namespace | Paradigm | Rule |
+|-------|-----------|----------|------|
+| Math | `nn::math` | Functional | Pure, stateless free functions over `std::span`. No classes, no allocation on caller's behalf, no hidden state. |
+| Object | `nn::core` | OO + polymorphism | `Tensor`, and abstract `Layer`/`Loss`/`Optimizer` with concretes. Owns structure/state; calls `nn::math` for arithmetic. |
+| API/Utility | `nn::api` | OO orchestration (thin) | `RunConfig`, `Dataset`, `Trainer`, `ExperimentRunner`. The surface apps call. |
+| Logging | `nn::log` | Abstract interface | `Loggable` + `JsonlSink`, implemented across layers. See logging rule. |
+
+## Placement
+
+Everything lives under `src/`. Folders group by *kind*; namespaces mark the *layer*.
+
+- Declarations (`.hpp`): `src/includes/{helpers,classes,api}/`. Included as e.g.
+  `#include "helpers/linalg.hpp"`.
+- Implementations (`.cpp`): `src/{helpers,classes,api}/` (mirrors `includes/`).
+- Mapping: `helpers/` = `nn::math` (free functions); `classes/` = `nn::core` + `nn::log`;
+  `api/` = `nn::api`.
+- Executables: `src/app/<name>/` (each has a `main()`). Python: `src/app/python/` (not built).
+- Tests: `tests/`. Generated logs: `runs/` (gitignored).
+
+## Concurrency / GPU
+
+- Parallelism goes in `nn::math` (threaded/OpenMP) or as parallel independent runs; object-layer
+  APIs must not change to accommodate it.
+- A future GPU backend is an alternate `nn::math` implementation, selected at runtime. The
+  object layer stays unchanged.
+
+Full detail: `docs/ARCHITECTURE.md`.

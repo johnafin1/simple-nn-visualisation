@@ -1,0 +1,37 @@
+---
+description: Logging is first-class - Loggable contract and JSONL output requirements
+alwaysApply: true
+---
+
+# Logging (First-Class)
+
+Observability is a design constraint, not an afterthought. Any component whose state we want to
+watch during training implements the `Loggable` abstract base; a `JsonlSink` writes structured
+**JSONL** to per-run files.
+
+## Contract
+
+- `Loggable` (in `nn::log`): pure virtual `log_name()` (stable id, e.g. `"dense.0"`) and
+  `to_json()`. New observable components inherit it.
+- The `Trainer` decides *when* to pull and emit state (scalars every step; heavy per-param data
+  interval-gated).
+
+## Run isolation (enables parallel runs)
+
+Each run gets a unique `run_id` and its own directory `runs/<run_id>/`. Never write shared
+mutable log state across runs.
+
+## Streams (keep separate)
+
+- `metrics.jsonl` — per-step scalars (loss, lr, weight_norm, grad_norm). Light, high frequency.
+- `params.jsonl` — per-parameter value + grad, **interval-gated** (`param_log_interval`).
+  Long-format: one row per param per logged step.
+- `predictions.jsonl` — sampled `x, y, y_hat` for curve/video frames.
+
+## Requirements
+
+- `JsonlSink` buffers and flushes on an interval so the live Python plotter sees fresh data.
+- Records must be valid one-object-per-line JSON, queryable by DuckDB/pandas without munging.
+- For repeated heavy analysis, promote `params.jsonl` to Parquet.
+
+Full schema + query examples: `docs/LOGGING.md`.
