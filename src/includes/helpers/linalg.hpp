@@ -24,4 +24,19 @@ void matvec(std::span<const double> A, std::span<const double> x,
 void matmul(std::span<const double> A, std::span<const double> B,
             std::span<double> C, std::size_t M, std::size_t K, std::size_t N);
 
+// Transposed matrix-vector product out = A^T * y.
+//   A is row-major M x N, y has length M, out has length N.
+//   Used in backprop: dL/dx = W^T * dL/dz.
+void matvec_t(std::span<const double> A, std::span<const double> y,
+              std::span<double> out, std::size_t M, std::size_t N);
+
+// Outer product out = a * b^T.
+//   a has length M, b has length N, out is row-major M x N.
+//   Used in backprop: dL/dW = dL/dz * x^T.
+void outer(std::span<const double> a, std::span<const double> b,
+           std::span<double> out, std::size_t M, std::size_t N);
+
+// Element-wise (Hadamard) product out[i] = a[i] * b[i]. All equal length.
+void mul(std::span<const double> a, std::span<const double> b, std::span<double> out);
+
 }  // namespace nn::math

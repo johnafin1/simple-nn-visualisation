@@ -56,4 +56,38 @@ void matmul(std::span<const double> A, std::span<const double> B,
     }
 }
 
+void matvec_t(std::span<const double> A, std::span<const double> y,
+              std::span<double> out, std::size_t M, std::size_t N) {
+    assert(A.size() == M * N && "matvec_t: A must have M*N elements");
+    assert(y.size() == M && "matvec_t: y must have M elements");
+    assert(out.size() == N && "matvec_t: out must have N elements");
+    for (std::size_t j = 0; j < N; ++j) {
+        double sum = 0.0;
+        for (std::size_t i = 0; i < M; ++i) {
+            sum += A[i * N + j] * y[i];
+        }
+        out[j] = sum;
+    }
+}
+
+void outer(std::span<const double> a, std::span<const double> b,
+           std::span<double> out, std::size_t M, std::size_t N) {
+    assert(a.size() == M && "outer: a must have M elements");
+    assert(b.size() == N && "outer: b must have N elements");
+    assert(out.size() == M * N && "outer: out must have M*N elements");
+    for (std::size_t i = 0; i < M; ++i) {
+        for (std::size_t j = 0; j < N; ++j) {
+            out[i * N + j] = a[i] * b[j];
+        }
+    }
+}
+
+void mul(std::span<const double> a, std::span<const double> b, std::span<double> out) {
+    assert(a.size() == b.size() && "mul: size mismatch");
+    assert(a.size() == out.size() && "mul: out size mismatch");
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        out[i] = a[i] * b[i];
+    }
+}
+
 }  // namespace nn::math

@@ -1,0 +1,4 @@
+# Tooling deps for the Streamlit test dashboard (not needed for analysis/video).
+# Install: .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+streamlit==1.60.0
+watchdog==6.0.0

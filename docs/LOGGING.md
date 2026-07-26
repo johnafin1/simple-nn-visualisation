@@ -66,7 +66,13 @@ Keeping streams separate is deliberate: `metrics.jsonl` stays small and fast to 
 {"run_id":"...","step":1200,"epoch":6,"split":"train","loss":0.0123,"lr":0.01,"weight_norm":4.87,"grad_norm":0.31,"wall_ms":1543}
 ```
 
-A matching `split:"test"` line is emitted at eval intervals.
+A matching line is emitted for **every non-train split** at `eval_interval` — `test` plus, for
+the primes experiment, `unseen_201_255` and `unseen_256_300`. Those extra lines carry only
+`loss` (and `accuracy`); `lr`, `weight_norm` and `grad_norm` describe the optimiser state and
+appear on the `train` row alone.
+
+For a **classification** run (`Loss::is_classification()`), every metrics line also carries
+`"accuracy"`. Regression runs omit the field entirely rather than logging a meaningless zero.
 
 ### `params.jsonl` — per-parameter, interval-gated
 
@@ -80,11 +86,19 @@ written every `param_log_interval` steps (configurable; can be 1 to capture ever
 One line per parameter per logged step. Long-format (one row per param) is intentional: it's the
 shape DuckDB/pandas want for grouping and time series.
 
-### `predictions.jsonl` — for function-curve video frames
+### `predictions.jsonl` — one row per sample per logged step
 
 ```json
-{"run_id":"...","step":1200,"x":-0.75,"y":0.5625,"y_hat":0.5102}
+{"step":1200,"split":"test","id":97,"target":1,"pred":0.83}
 ```
+
+`id` is the sample's identity from its `Split` — the integer `n` for primes, the `x` value for
+`x^2` — and is the independent variable when plotting. `pred` is passed through
+`Loss::activate()`, so it is a probability for a classifier and the raw output for a regressor.
+
+One schema for both tasks is what lets a single stream feed both the `x^2` prediction curve and
+the primes heatmap. Which splits get written is controlled by `RunConfig::predict_splits`
+(empty means all); `train_x2` narrows it to its dense `grid` split.
 
 ## Volume and performance
 

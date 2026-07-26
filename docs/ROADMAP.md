@@ -13,18 +13,43 @@ signed off.
 | 2 | Object layer + backprop | `Tensor`, `Layer`/`DenseLayer`, `Loss`, `Network`; hand-written backward | Gradient check: analytic vs numeric within tolerance |
 | 3 | Logging + train loop | `Loggable`, `JsonlSink`, `Trainer`, `Optimizer` (SGD) | A run produces valid `metrics.jsonl`; loss decreases |
 | 4 | Live visualisation | `src/app/python/live_plot.py` tails logs | Loss curve updates in real time during a run |
-| 5 | Grokking `x^2` | `Dataset`, weight decay, long-run config | Test loss drops sharply well after train loss (grok), or documented result |
+| 5 | Grokking (`x^2` + primality) | Multi-split `Dataset`, `Sigmoid`, fused BCE, weight decay, accuracy, prediction heatmap | Test loss drops sharply well after train loss (grok), or documented result |
 | 6 | Parallel experiments | `ExperimentRunner`; multi-run compare | N configs run concurrently; overlaid comparison plot |
 | 7 | Video / analysis pack | `make_video.py`, `query.py`, Parquet path | `.mp4` of loss + prediction curve from logs |
 | 8 | Intra-op parallelism | Threaded/OpenMP matmul behind `nn::math` | Speedup on larger nets; identical results to serial |
 | 9 | Optional: GUI / GPU | ImGui live view and/or GPU math backend | Only if we want it; core unchanged |
+
+## Progress
+
+- Phases 0-2 complete. **Phase 3 complete**: `Loggable`, hand-rolled `JsonLine` + `JsonlSink`,
+  `Optimizer`/`Sgd`, `RunConfig`, `Dataset`, and `Trainer` are implemented and tested; `train_x2`
+  produces a valid `runs/<id>/metrics.jsonl` with decreasing loss. Bonus: a Streamlit network
+  forward/backward visualiser (`src/app/python/network_demo.py`) reads a C++-emitted snapshot.
+- **Phase 4 complete**: `JsonlSink` now flushes on a timer as well as a record count, `train_x2`
+  takes CLI args for long runs, and `src/app/python/live_plot.py` tails `metrics.jsonl`
+  incrementally (partial-line safe) to plot train/test loss plus `weight_norm`/`grad_norm` live.
+  Verified mid-run: rows arriving continuously while `meta.json` status is `running`.
+- **Phase 5 complete**: the classification infrastructure is in (`Sigmoid`, fused
+  `BceWithLogitsLoss`, `SgdWeightDecay`, per-split accuracy), `Dataset` was generalised into
+  named vector-valued `Split`s with per-sample `ids`, `Trainer` now evaluates every non-train
+  split and writes a generic per-sample predictions schema, and `src/app/python/primes_plot.py`
+  renders the prediction heatmap live. The **primality on [2, 200]** experiment was run in both
+  `bits` and `onehot` encodings with 201-255 and 256-300 held out entirely.
+  **Result: no grok** — train accuracy hit 100% while every held-out split sat at or below its
+  base rate, and weight decay shrank the weight norm without any generalisation following. Full
+  numbers in [EXPERIMENTS.md](EXPERIMENTS.md#actual-results-phase-5). This is the documented-result
+  branch of the exit criterion, not the grok branch.
+- Next: Phase 6 (parallel experiments). A weight-decay sweep is the natural first use, and
+  running the modular-arithmetic task from [EXPERIMENTS.md](EXPERIMENTS.md) is the way to see a
+  real grok — primality simply has no compact circuit for a small MLP to find.
 
 ## Notes
 
 - **Parallel experiments (Phase 6)** are low-risk and high-value for comparing hyperparameters
   (e.g. weight-decay sweeps for grokking). Runs are isolated by `run_id`, so we can always add
   more.
-- **Phase 5 honesty:** sharp textbook grokking is most reliable on algorithmic tasks. `x^2`
-  regression may show gradual generalisation instead of a hard phase transition. See
-  [EXPERIMENTS.md](EXPERIMENTS.md) for the plan and the modular-arithmetic fallback.
+- **Phase 5 honesty, in hindsight:** sharp textbook grokking is most reliable on algorithmic
+  tasks, and the primality run bore that out — it overfit cleanly rather than grokking. The one
+  transferable rule it found ("even numbers are composite") appeared in the first ~50 steps and
+  was then trained away. See [EXPERIMENTS.md](EXPERIMENTS.md) and the modular-arithmetic fallback.
 - Phases 8-9 are explicitly optional and gated on real need.
