@@ -1,5 +1,11 @@
 # Phase 0 Plan — Toolchain + Buildable Skeleton
 
+> Historical completed-phase plan. Use [../STATUS.md](../STATUS.md) for current state and
+> [../ROADMAP.md](../ROADMAP.md) for what comes next.
+>
+> Superseded decision: Phase 3 chose hand-written `JsonLine`/`JsonlSink` instead of the
+> nlohmann/json + vcpkg proposal retained below for historical context.
+
 **Goal:** turn the greenfield repo into a project that compiles and runs a trivial C++20 target
 via CMake, with the Python analysis environment ready. No neural-network code yet.
 

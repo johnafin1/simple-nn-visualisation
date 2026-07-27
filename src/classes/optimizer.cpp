@@ -6,6 +6,7 @@ namespace nn::core {
 
 void Sgd::step(std::vector<ParamView>& params) {
     for (ParamView& p : params) {
+        if (!p.trainable) continue;
         for (std::size_t i = 0; i < p.values.size(); ++i) {
             p.values[i] -= lr_ * p.grads[i];
         }
@@ -14,6 +15,7 @@ void Sgd::step(std::vector<ParamView>& params) {
 
 void SgdWeightDecay::step(std::vector<ParamView>& params) {
     for (ParamView& p : params) {
+        if (!p.trainable) continue;
         const bool decay = decay_bias_ || p.name != "bias";
         const double lambda = decay ? lambda_ : 0.0;
         for (std::size_t i = 0; i < p.values.size(); ++i) {

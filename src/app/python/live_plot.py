@@ -72,11 +72,13 @@ class SplitSeries:
 
     steps: list[int] = field(default_factory=list)
     loss: list[float] = field(default_factory=list)
+    accuracy_steps: list[int] = field(default_factory=list)
     accuracy: list[float] = field(default_factory=list)
 
     def clear(self) -> None:
         self.steps.clear()
         self.loss.clear()
+        self.accuracy_steps.clear()
         self.accuracy.clear()
 
 
@@ -104,6 +106,7 @@ class Series:
         series.steps.append(int(step))
         series.loss.append(float(loss))
         if "accuracy" in record:
+            series.accuracy_steps.append(int(step))
             series.accuracy.append(float(record["accuracy"]))
         # Norms are only present on train rows.
         if "weight_norm" in record:
@@ -257,10 +260,8 @@ def build_plot(run_dir: Path, logx: bool):
             line_for(ax_loss, loss_lines, name, order).set_data(xs, ys)
             all_losses.extend(s.loss)
             if ax_acc is not None and s.accuracy:
-                axs, ays = decimate(s.steps, s.accuracy)
-                line_for(ax_acc, acc_lines, name, order).set_data(
-                    axs[: len(ays)], ays
-                )
+                axs, ays = decimate(s.accuracy_steps, s.accuracy)
+                line_for(ax_acc, acc_lines, name, order).set_data(axs, ays)
 
         apply_scale(ax_loss, all_losses, logy=True)
         ax_loss.relim()

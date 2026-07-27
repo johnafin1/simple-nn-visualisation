@@ -31,6 +31,8 @@ public:
 
     [[nodiscard]] std::size_t in_features() const { return in_features_; }
     [[nodiscard]] std::size_t out_features() const { return out_features_; }
+    void set_trainable(bool trainable);
+    [[nodiscard]] bool is_trainable() const { return trainable_; }
 
 private:
     std::size_t in_features_;
@@ -42,6 +44,7 @@ private:
     Tensor grad_w_;    // out x in
     Tensor grad_b_;    // out x 1
     Tensor cached_x_;  // in x 1, saved during forward for use in backward
+    bool trainable_ = true;
 };
 
 }  // namespace nn::core

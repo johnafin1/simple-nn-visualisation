@@ -75,8 +75,9 @@ int main(int argc, char** argv) {
     cfg.steps = 4000;
     cfg.eval_interval = 25;
     cfg.param_log_interval = 250;
-    cfg.predict_interval = 25;
-    // predict_splits left empty: every split is logged, which is what the heatmap needs.
+    cfg.predict_interval = 0;
+    // The current prime dashboard reads aggregate metrics, so per-sample predictions
+    // are disabled unless explicitly requested through the CLI.
 
     PrimesConfig data_cfg;
     int hidden = 32;

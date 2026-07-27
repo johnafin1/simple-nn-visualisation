@@ -121,17 +121,49 @@ its status says so.
   check, and exact finite values at `z = ±800` where the naive form gives `inf`
   (`tests/test_loss.cpp`, `tests/test_core_loss.cpp`)
 
+### Class-weighted binary cross-entropy with logits
+- Status: implemented
+- Layer: nn::math pure functions + nn::core `WeightedBceWithLogitsLoss`
+- Math:
+  `L = mean(w(y) * [max(z,0) - z*y + log(1 + exp(-|z|))])`, where `w(1)=w_pos` and
+  `w(0)=w_neg`.
+- Backward: `dL/dz = w(y) * (sigmoid(z) - y) / N`.
+- Forward role: balances the aggregate training influence of rare primes and common composites
+  without changing the natural validation/test distribution.
+- Notes: `train_prime_transfer` uses normalised inverse-frequency weights
+  `N/(2*N_class)`, giving average sample weight approximately one. Both weights must be positive.
+- Files: `src/includes/helpers/loss.hpp`, `src/helpers/loss.cpp`,
+  `src/includes/classes/loss.hpp`, `src/classes/loss.cpp`
+- Tests: closed-form weighted value/gradient, numeric gradient check, core wrapper activation,
+  and invalid-weight rejection (`tests/test_loss.cpp`, `tests/test_core_loss.cpp`)
+
 ### Classification accuracy metric
-- Status: implemented (Phase 5)
+- Status: implemented (Phase 5; balanced binary metrics added in the prime-transfer follow-up)
 - Layer: nn::api `Trainer`
 - Notes: fraction of correct predictions after thresholding `Loss::activate(y_hat)` at 0.5,
   logged per split into `metrics.jsonl` next to `loss`. Emitted only when
   `Loss::is_classification()`, so regression runs are unchanged. Essential for the primes
   experiment because the 23.1% base rate means loss alone hides whether the model is doing
-  better than "always composite".
+  better than "always composite". Single-output classifiers additionally log balanced accuracy,
+  prime/composite recall, precision, and TP/TN/FP/FN counts.
 - Files: `src/includes/api/trainer.hpp`, `src/api/trainer.cpp`
-- Tests: every metrics row carries an in-range accuracy for a classification run and none does
-  for a regression run (`tests/test_trainer.cpp`)
+- Tests: every classification row carries in-range accuracy and binary rows carry the balanced
+  metrics/counts; regression rows carry none (`tests/test_trainer.cpp`)
+
+### Frozen dense parameters and replaceable transfer head
+- Status: implemented
+- Layer: nn::core `DenseLayer`, `ParamView`, `Network`, optimisers
+- Math: a frozen block still propagates `dL/dx = W^T dL/dy`, but does not accumulate `dL/dW` or
+  `dL/db`; optimisers skip its `ParamView` entirely, including weight decay.
+- Forward role: preserves a learned encoder while a new output head is trained.
+- Backward role: keeps gradient flow structurally valid while guaranteeing frozen values remain
+  unchanged.
+- Notes: `Network::remove_last()` replaces only the final head and rejects an empty network.
+- Files: `src/includes/classes/{layer,dense_layer,network}.hpp`,
+  `src/classes/{dense_layer,network,optimizer}.cpp`
+- Tests: frozen gradients/optimizer update, input-gradient propagation, head replacement, and
+  empty-network rejection (`tests/test_dense_layer.cpp`, `tests/test_optimizer.cpp`,
+  `tests/test_network.cpp`)
 
 ### Weight initialisation (Xavier / He)
 - Status: implemented
@@ -166,16 +198,21 @@ its status says so.
     composites split separately, so both sides carry primes at the same base rate), plus
     `unseen_201_255` / `unseen_256_300` for the bit encoding. See
     [EXPERIMENTS.md](EXPERIMENTS.md) for the encoding and 9-bit reasoning.
+  - A non-zero `validation_fraction` creates a third stratified split before the remainder is
+    assigned to test.
+  - `Dataset::prime_residues(...)` reuses those exact IDs/inputs and replaces the labels with
+    `[sin(2*pi*n/q), cos(2*pi*n/q)]` pairs for each modulus.
 - Files: `src/includes/api/dataset.hpp`, `src/api/dataset.cpp`
 - Tests: split sizes and disjointness, labels against a known prime list, stratification,
-  bit-encoding round-trip, one-hot one-hotness, determinism (`tests/test_dataset.cpp`)
+  60/20/20 class counts through 500, residue targets, bit-encoding round-trip, one-hot
+  one-hotness, determinism (`tests/test_dataset.cpp`)
 
 ### Sieve of Eratosthenes (data generation)
 - Status: implemented (Phase 5)
 - Layer: nn::api free function `prime_sieve(n)`
 - Math: mark multiples of each prime `p` starting at `p*p`; anything unmarked is prime.
-- Notes: hand-written like everything else — no library lookup tables. Used both for labelling
-  and for the heatmap's ground-truth gutter.
+- Notes: hand-written like everything else — no library lookup tables. Used for prime labels,
+  class-balance counts, and held-out metric verification.
 - Files: `src/includes/api/dataset.hpp`, `src/api/dataset.cpp`
 - Tests: exact match against the 46 known primes ≤ 200 (`tests/test_dataset.cpp`)
 
@@ -185,11 +222,16 @@ its status says so.
 - Notes: full-batch loop (forward per sample, grad accumulation, one `Sgd` step, `zero_grad`).
   Emits `metrics.jsonl` (per-step scalars), `params.jsonl` (per-param value+grad, interval-gated),
   `predictions.jsonl` (dense x-grid), plus `config.json` / `meta.json`, into `runs/<run_id>/`.
-  JSON is hand-rolled (zero deps) per Phase 3 decision.
+  Sequential phases may append to the same streams with a phase label and continuous global
+  step; each phase also writes `config_<phase>.json`.
+  JSON is hand-rolled (zero runtime deps) per the Phase 3 decision. `Loggable` supplies stable
+  identity only; `Trainer` serialises metrics and `ParamView` data with `JsonLine`. Full config
+  provenance, metadata lifecycle, and cross-stream run identity remain tracked in
+  [RECTIFICATIONS.md](RECTIFICATIONS.md).
 - Files: `src/includes/api/{run_config,trainer}.hpp`, `src/api/trainer.cpp`,
   `src/includes/classes/{json_line,jsonl_sink}.hpp`, `src/classes/{json_line,jsonl_sink}.cpp`
-- Tests: JSON format/escaping + sink round-trip (`tests/test_json.cpp`); end-to-end run produces
-  valid streams with decreasing loss (`tests/test_trainer.cpp`) - Phase 3 exit criterion.
+- Tests: JSON format/escaping, sink append round-trip (`tests/test_json.cpp`), and staged
+  end-to-end runs with continuous steps (`tests/test_trainer.cpp`).
 
 ### (later) Adam / AdamW
 - Status: planned

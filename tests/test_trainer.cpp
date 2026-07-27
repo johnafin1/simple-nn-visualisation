@@ -157,14 +157,27 @@ TEST_CASE("Trainer logs accuracy per split for a classification loss") {
 
     const auto lines = read_lines(run_dir / "metrics.jsonl");
     std::size_t with_accuracy = 0;
+    std::size_t with_balanced_accuracy = 0;
     for (const std::string& line : lines) {
         if (const auto a = field(line, "accuracy")) {
             ++with_accuracy;
             CHECK(*a >= 0.0);
             CHECK(*a <= 1.0);
         }
+        if (const auto balanced = field(line, "balanced_accuracy")) {
+            ++with_balanced_accuracy;
+            CHECK(*balanced >= 0.0);
+            CHECK(*balanced <= 1.0);
+            CHECK(field(line, "prime_recall").has_value());
+            CHECK(field(line, "composite_recall").has_value());
+            CHECK(field(line, "true_positive").has_value());
+            CHECK(field(line, "true_negative").has_value());
+            CHECK(field(line, "false_positive").has_value());
+            CHECK(field(line, "false_negative").has_value());
+        }
     }
     CHECK(with_accuracy == lines.size());
+    CHECK(with_balanced_accuracy == lines.size());
 
     // Unseen splits are evaluated too.
     CHECK_FALSE(losses_for(run_dir / "metrics.jsonl", "unseen_61_80").empty());
@@ -183,6 +196,58 @@ TEST_CASE("Trainer logs accuracy per split for a classification loss") {
     CHECK(saw_unseen);
 
     std::filesystem::remove_all(cfg.runs_dir, ec);
+}
+
+TEST_CASE("Trainer appends staged phases with global steps into one run") {
+    Network net("network");
+    net.add(std::make_unique<DenseLayer>(1, 1, InitKind::Xavier, 1, "dense.0"));
+    MseLoss loss;
+    Sgd opt(0.01);
+    Dataset data = Dataset::x_squared(4, 3, 7, 3);
+
+    RunConfig first;
+    first.name = "unit_staged";
+    first.phase = "first";
+    first.steps = 1;
+    first.total_experiment_steps = 2;
+    first.eval_interval = 1;
+    first.param_log_interval = 0;
+    first.predict_interval = 0;
+    first.finalize_run = false;
+    first.runs_dir = std::filesystem::temp_directory_path() / "nn_trainer_staged_runs";
+    std::error_code ec;
+    std::filesystem::remove_all(first.runs_dir, ec);
+
+    Trainer first_trainer(net, loss, opt, first);
+    const auto run_dir = first_trainer.train(data);
+
+    RunConfig second = first;
+    second.run_id = first_trainer.run_id();
+    second.phase = "second";
+    second.step_offset = 1;
+    second.append_logs = true;
+    second.finalize_run = true;
+    Trainer second_trainer(net, loss, opt, second);
+    second_trainer.train(data);
+
+    const auto lines = read_lines(run_dir / "metrics.jsonl");
+    std::vector<std::string> train_lines;
+    for (const auto& line : lines) {
+        if (has_split(line, "train")) train_lines.push_back(line);
+    }
+    REQUIRE(train_lines.size() == 2);
+    CHECK(train_lines[0].find("\"phase\":\"first\"") != std::string::npos);
+    CHECK(train_lines[1].find("\"phase\":\"second\"") != std::string::npos);
+    const auto first_step = field(train_lines[0], "step");
+    const auto second_step = field(train_lines[1], "step");
+    REQUIRE(first_step.has_value());
+    REQUIRE(second_step.has_value());
+    CHECK(*first_step == doctest::Approx(0.0));
+    CHECK(*second_step == doctest::Approx(1.0));
+    CHECK(std::filesystem::exists(run_dir / "config_first.json"));
+    CHECK(std::filesystem::exists(run_dir / "config_second.json"));
+
+    std::filesystem::remove_all(first.runs_dir, ec);
 }
 
 TEST_CASE("one-hot primes config trains without unseen splits") {

@@ -1,162 +1,194 @@
 # Architecture
 
-The project is organised into **layers** with deliberately different programming paradigms.
-The goal: keep the numerical core pure and testable, keep domain objects clean and
-polymorphic, and keep orchestration (the "API" we call from experiments) separate.
+The project separates reusable numerical primitives, stateful neural-network objects,
+orchestration, applications, and logging. Current implementation status is recorded in
+[STATUS.md](STATUS.md); future phase work belongs in [ROADMAP.md](ROADMAP.md).
 
-## The layers
+## Implemented layers
 
 ```mermaid
 flowchart TD
-  subgraph apps [apps_and_experiments]
-    Exp["train_x2 / experiment runner"]
+  subgraph apps [applications]
+    App["smoke / demo / train_x2 / train_primes / train_prime_transfer"]
   end
-  subgraph util [utility_layer_nn_api]
+
+  subgraph api [nn_api_orchestration]
     Trainer["Trainer"]
-    Runner["ExperimentRunner (parallel)"]
-    Config["RunConfig / Dataset"]
+    Config["RunConfig"]
+    Dataset["Dataset / Split"]
   end
-  subgraph obj [object_layer_nn_core]
-    Net["Network"]
-    Layer["Layer (abstract)"]
-    Loss["Loss (abstract)"]
-    Opt["Optimizer (abstract)"]
-    Tensor["Tensor / Matrix"]
+
+  subgraph core [nn_core_objects]
+    Network["Network"]
+    Layer["Layer + concrete layers"]
+    Dense["DenseLayer"]
+    Loss["Loss + concrete losses"]
+    Optimizer["Optimizer + SGD variants"]
+    Tensor["Tensor / ParamView"]
   end
-  subgraph math [math_layer_nn_math_functional]
-    Ops["pure functions: matmul, activations, grads, mse"]
+
+  subgraph math [nn_math_pure_functions]
+    Ops["linalg / activations / loss / init"]
   end
-  subgraph log [logging_cross_cutting_nn_log]
-    Loggable["Loggable (abstract)"]
+
+  subgraph log [nn_log]
+    Loggable["Loggable: stable identity"]
+    JsonLine["JsonLine"]
     Sink["JsonlSink"]
   end
 
-  Exp --> Trainer
-  Exp --> Runner
-  Trainer --> Config
-  Trainer --> Net
-  Net --> Layer
+  App --> Trainer
+  App --> Config
+  App --> Dataset
+  Trainer --> Network
   Trainer --> Loss
-  Trainer --> Opt
+  Trainer --> Optimizer
+  Trainer --> Dataset
+  Network --> Layer
+  Dense --> Layer
   Layer --> Tensor
   Layer --> Ops
   Loss --> Ops
-  Opt --> Ops
-  Trainer -.emits.-> Loggable
-  Net -.implements.-> Loggable
-  Layer -.implements.-> Loggable
-  Loggable --> Sink
+  Optimizer --> Tensor
+  Network -.implements.-> Loggable
+  Dense -.implements.-> Loggable
+  Trainer --> JsonLine
+  JsonLine --> Sink
 ```
 
-### 1. Math layer — `nn::math` (functional)
+Dependencies flow downward: applications -> `nn::api` -> `nn::core` -> `nn::math`. `nn::log`
+is a cross-cutting identity/output utility used by core and API code. Lower layers must not
+depend on higher layers.
 
-Pure, stateless free functions. No ownership, no classes, no hidden state. They operate on
-lightweight views (`std::span<const double>` / `std::span<double>`) so they never allocate on
-the caller's behalf unless asked.
+### 1. Math layer — `nn::math`
 
-Why functional here: math ops are the most reused, most unit-testable, and most parallelisable
-part. Purity makes them trivial to test (numeric gradient checks) and later to hand to threads
-or a GPU backend without worrying about shared state.
+Pure, stateless free functions over `std::span` views. Callers own input/output storage; math
+functions do not keep hidden state or allocate result buffers on the caller's behalf.
 
-Examples we'll build: `matmul`, `axpy`, `relu` / `relu_grad`, `tanh_grad`, `mse` / `mse_grad`,
-`xavier_init`, `he_init`.
+Implemented groups:
 
-### 2. Object layer — `nn::core` (OO + polymorphism)
+- linear algebra: matrix/vector operations and norms;
+- activations: ReLU, tanh, sigmoid, and gradients;
+- losses: MSE and numerically stable BCE-with-logits primitives;
+- seeded Xavier/He initialisation.
 
-The domain model. This is where inheritance/polymorphism earns its place:
+Purity makes these functions easy to test with hand-computed cases and numeric gradient checks,
+and leaves room for later CPU parallelism or alternate backends.
 
-- `Tensor` / `Matrix` — value type holding data + shape (rule of 5, see
-  [CPP_CONVENTIONS.md](CPP_CONVENTIONS.md)).
-- `Layer` — abstract base with virtual `forward` / `backward`; concrete `DenseLayer`,
-  `ReluLayer`, `TanhLayer`.
-- `Loss` — abstract base; concrete `MseLoss`.
-- `Optimizer` — abstract base; concrete `Sgd`, `SgdWeightDecay` (and later `AdamW`).
-- `Network` — owns an ordered list of `Layer`s, drives forward/backward.
+### 2. Object layer — `nn::core`
 
-Objects **call into the math layer** for the actual arithmetic. They own structure and state;
-math owns computation.
+The domain model owns structure and mutable training state:
 
-### 3. Utility / API layer — `nn::api`
+- `Tensor` is a row-major value type backed by `std::vector<double>`. It follows the **Rule of
+  Zero**; vector already supplies correct copying, moving, and destruction.
+- `Layer` is the abstract forward/backward/parameter interface. Concrete layers include
+  `DenseLayer`, `ReluLayer`, `TanhLayer`, and `SigmoidLayer`.
+- `Loss` is abstract; `MseLoss`, `BceWithLogitsLoss`, and
+  `WeightedBceWithLogitsLoss` call `nn::math`.
+- `Optimizer` is abstract; `Sgd` and `SgdWeightDecay` perform stateful in-place updates over
+  `ParamView` records, skipping blocks marked frozen.
+- `Network` owns an ordered `std::unique_ptr<Layer>` sequence, drives forward/backward, and can
+  remove its final layer so an experiment can replace a pretraining head without copying the
+  encoder.
 
-The interface experiments talk to. It orchestrates the object layer but exposes a small,
-stable surface:
+Core objects call `nn::math` for reusable numerical primitives. Small operations inherently tied
+to object state—such as an optimiser's in-place parameter update—remain in the owning core
+object rather than creating a one-use math API.
 
-- `RunConfig` — hyperparameters + logging config for one run.
-- `Dataset` — generates/splits data (e.g. `x^2` samples).
-- `Trainer` — the train loop: forward, loss, backward, optimiser step, logging.
-- `ExperimentRunner` — launches **multiple runs in parallel** (each isolated by `run_id`) and
-  collects their log locations for comparison.
+### 3. API layer — `nn::api`
 
-### 4. Logging — `nn::log` (cross-cutting, first-class)
+The current application-facing surface is:
 
-Logging is not bolted on; it is a design constraint. Any component that wants to report state
-inherits the `Loggable` abstract base and implements a serialisation hook. A `JsonlSink` writes
-records to per-run `.jsonl` files. Full contract in [LOGGING.md](LOGGING.md).
+- `RunConfig`: single-run hyperparameters, logging cadence, and optional staged-run metadata.
+- `Dataset`/`Split`: `x^2` and primality data with named splits, row-major inputs, targets, and
+  per-sample IDs. Prime data also supports a validation fraction and cyclic residue targets.
+- `Trainer`: full-batch training, evaluation, optimisation, class-balanced metrics, and run
+  artefact emission. Sequential phases can append to one run with continuous global steps.
 
-## Data flow of one training step
+`ExperimentRunner` is planned for Phase 6. It is not part of the current API.
+
+### 4. Logging — `nn::log`
+
+The implementation has three pieces:
+
+- `Loggable`: stable `log_name()` identity only, implemented by `Network` and `DenseLayer`.
+- `JsonLine`: hand-written builder for the primitive JSON values the project emits.
+- `JsonlSink`: buffered writer with record-count and elapsed-time flushing.
+
+`Trainer` serialises metrics directly and enumerates `Network::parameters()` for parameter rows.
+There is no virtual `to_json()` contract and no third-party JSON dependency. See
+[LOGGING.md](LOGGING.md).
+
+## One training step
 
 ```mermaid
 sequenceDiagram
   participant T as Trainer
   participant N as Network
   participant L as Layers
-  participant M as nn::math
-  participant Lg as JsonlSink
+  participant Loss as Loss
+  participant O as Optimizer
+  participant J as JsonLine/JsonlSink
 
-  T->>N: forward(x)
-  N->>L: forward per layer
-  L->>M: matmul / activation
-  M-->>L: outputs
-  L-->>N: y_hat
-  N-->>T: y_hat
-  T->>M: mse(y_hat, y) + mse_grad
-  T->>N: backward(grad)
-  N->>L: backward per layer (reverse)
-  L->>M: grads
-  T->>N: optimizer.step(params, grads)
-  T->>Lg: log metrics (+ params at interval)
+  loop each training sample
+    T->>N: forward(x)
+    N->>L: forward in order
+    L-->>T: raw prediction
+    T->>Loss: value(prediction, target)
+    T->>Loss: grad(prediction, target)
+    T->>N: backward(loss gradient)
+    N->>L: backward in reverse
+  end
+  T->>N: parameters()
+  T->>O: step(ParamViews)
+  T->>J: metrics and interval-gated state
+  T->>N: zero_grad()
 ```
 
 ## Source layout
 
-```
+```text
 src/
-  includes/          # public headers (.hpp) = declarations, on the include path
-    helpers/         # free-function declarations (nn::math + pure utilities)
-    classes/         # class declarations (nn::core objects + nn::log)
-    api/             # orchestration surface declarations (nn::api)
-  helpers/           # implementations (.cpp) for includes/helpers
-  classes/           # implementations (.cpp) for includes/classes
-  api/               # implementations (.cpp) for includes/api
-  app/               # executables: each subdir has a main()
-    smoke/           # Phase 0 build proof
-    train_x2/        # flagship experiment entrypoint (later)
-    python/          # analysis/visualisation scripts (NOT built by CMake)
-      live_plot.py   # tails run logs, live matplotlib
-      make_video.py  # logs -> frames -> mp4
-      query.py       # DuckDB helpers
-tests/               # unit tests incl. numeric gradient checks
-runs/                # generated per-run logs (gitignored)
+  includes/
+    helpers/             # nn::math declarations
+    classes/             # nn::core and nn::log declarations
+    api/                 # nn::api declarations
+  helpers/               # nn::math implementations
+  classes/               # nn::core and nn::log implementations
+  api/                   # nn::api implementations
+  app/
+    smoke/               # toolchain proof
+    demo/                # small C++ demo
+    train_x2/            # x^2 experiment
+    train_primes/        # primality experiment
+    train_prime_transfer/ # modulo-pretrained frozen-encoder prime experiment
+    python/              # not built by CMake
+      test_dashboard.py
+      network_demo.py
+      live_plot.py
+      primes_plot.py      # class-balanced prime generalisation dashboard
+tests/                   # doctest suite and numeric gradient checks
+runs/                    # generated per-run artefacts (gitignored)
 ```
 
-Code includes headers by their bucket, e.g. `#include "helpers/linalg.hpp"`.
+Headers are included by bucket, for example `#include "helpers/linalg.hpp"`.
 
-### Folders vs namespaces
+| Folder (`includes/` + implementation) | Namespace(s) | Contents |
+|---|---|---|
+| `helpers/` | `nn::math` | Pure free numerical functions |
+| `classes/` | `nn::core`, `nn::log` | Tensors, layers, losses, optimisers, network, logging utilities |
+| `api/` | `nn::api` | Datasets, run configuration, and training orchestration |
 
-Folders group by *kind* (free functions / classes / api); namespaces mark the *architectural
-layer*. The mapping:
+All current library `.cpp` files are registered in `src/CMakeLists.txt`. Each C++ application
+subdirectory has its own `main.cpp` and CMake target; Python scripts are deliberately excluded
+from CMake.
 
-| Folder (`includes/` + impl) | Namespace(s) | Contents |
-|------------------------------|--------------|----------|
-| `helpers/` | `nn::math` | Pure free functions: matmul, activations, grads, mse, init |
-| `classes/` | `nn::core`, `nn::log` | `Tensor`, `Layer`, `Loss`, `Optimizer`, `Network`, `Loggable`, `JsonlSink` |
-| `api/` | `nn::api` | `RunConfig`, `Dataset`, `Trainer`, `ExperimentRunner` |
+## Planned extensions
 
-## Concurrency and GPU (deferred, but designed for)
+- **Phase 6:** `ExperimentRunner` for isolated concurrent runs.
+- **Phase 7:** reusable `query.py`, `make_video.py`, and Parquet analysis path.
+- **Phase 8:** intra-operation CPU parallelism behind `nn::math`.
+- **Phase 9:** optional GUI or alternate/GPU math backend.
 
-- **Parallel experiments** come first and are the easy win: independent runs on separate
-  threads/processes, no shared mutable state.
-- **Intra-op parallelism** (threaded `matmul`, OpenMP) slots into the math layer without
-  changing object-layer APIs, precisely because math is pure.
-- **GPU** would be an alternate math-layer backend selected at runtime; the object layer stays
-  unchanged. We only pursue this once CPU is solid and there's hardware.
+Future components must not be described as implemented until present, registered, tested, and
+reflected in [STATUS.md](STATUS.md).

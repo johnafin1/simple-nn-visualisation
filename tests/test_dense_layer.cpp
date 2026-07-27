@@ -106,3 +106,18 @@ TEST_CASE("DenseLayer zero_grad clears accumulation") {
     for (double g : params[0].grads) CHECK(g == doctest::Approx(0.0));
     for (double g : params[1].grads) CHECK(g == doctest::Approx(0.0));
 }
+
+TEST_CASE("a frozen DenseLayer propagates input gradients without accumulating parameters") {
+    DenseLayer dense(2, 2, InitKind::Xavier, 1, "dense.0");
+    dense.set_trainable(false);
+    CHECK_FALSE(dense.is_trainable());
+    dense.forward(Tensor::column({1.0, -1.0}));
+    const Tensor grad_in = dense.backward(Tensor::column({1.0, 1.0}));
+    CHECK(grad_in.size() == 2);
+    for (const auto& param : dense.parameters()) {
+        CHECK_FALSE(param.trainable);
+        for (const double grad : param.grads) {
+            CHECK(grad == doctest::Approx(0.0));
+        }
+    }
+}

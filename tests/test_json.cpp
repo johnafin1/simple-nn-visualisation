@@ -115,3 +115,26 @@ TEST_CASE("JsonlSink creates missing parent directories") {
     CHECK(std::filesystem::exists(path));
     std::filesystem::remove_all(dir, ec);
 }
+
+TEST_CASE("JsonlSink can append a later training phase") {
+    const auto path = std::filesystem::temp_directory_path() / "nn_test_sink_append.jsonl";
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    {
+        JsonlSink sink(path, 1);
+        sink.write(JsonLine{}.add("phase", std::string_view{"first"}).str());
+    }
+    {
+        JsonlSink sink(path, 1, 250, true);
+        sink.write(JsonLine{}.add("phase", std::string_view{"second"}).str());
+    }
+
+    std::ifstream in(path);
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(in, line)) lines.push_back(line);
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[0].find("first") != std::string::npos);
+    CHECK(lines[1].find("second") != std::string::npos);
+    std::filesystem::remove(path, ec);
+}

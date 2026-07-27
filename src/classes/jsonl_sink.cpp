@@ -5,7 +5,7 @@
 namespace nn::log {
 
 JsonlSink::JsonlSink(std::filesystem::path file, std::size_t flush_every,
-                     int flush_interval_ms)
+                     int flush_interval_ms, bool append)
     : path_(std::move(file)),
       flush_every_(flush_every == 0 ? 1 : flush_every),
       flush_interval_(std::chrono::milliseconds(flush_interval_ms < 0 ? 0
@@ -13,7 +13,9 @@ JsonlSink::JsonlSink(std::filesystem::path file, std::size_t flush_every,
     if (path_.has_parent_path()) {
         std::filesystem::create_directories(path_.parent_path());
     }
-    out_.open(path_, std::ios::out | std::ios::trunc);
+    const auto mode = append ? (std::ios::out | std::ios::app)
+                             : (std::ios::out | std::ios::trunc);
+    out_.open(path_, mode);
 }
 
 JsonlSink::~JsonlSink() {

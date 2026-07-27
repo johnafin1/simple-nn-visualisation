@@ -39,13 +39,16 @@ Tensor DenseLayer::forward(const Tensor& x) {
 Tensor DenseLayer::backward(const Tensor& grad_out) {
     assert(grad_out.size() == out_features_ && "DenseLayer::backward: grad_out has wrong size");
 
-    // dL/db = grad_out  (accumulate)
-    nn::math::axpy(1.0, grad_out.cspan(), grad_b_.span());
+    if (trainable_) {
+        // dL/db = grad_out  (accumulate)
+        nn::math::axpy(1.0, grad_out.cspan(), grad_b_.span());
 
-    // dL/dW += grad_out * x^T  (outer product, out x in), accumulated
-    Tensor dw(out_features_, in_features_);
-    nn::math::outer(grad_out.cspan(), cached_x_.cspan(), dw.span(), out_features_, in_features_);
-    nn::math::axpy(1.0, dw.cspan(), grad_w_.span());
+        // dL/dW += grad_out * x^T  (outer product, out x in), accumulated
+        Tensor dw(out_features_, in_features_);
+        nn::math::outer(grad_out.cspan(), cached_x_.cspan(), dw.span(), out_features_,
+                        in_features_);
+        nn::math::axpy(1.0, dw.cspan(), grad_w_.span());
+    }
 
     // dL/dx = W^T * grad_out
     Tensor grad_in(in_features_, 1);
@@ -57,14 +60,22 @@ Tensor DenseLayer::backward(const Tensor& grad_out) {
 std::vector<ParamView> DenseLayer::parameters() {
     return {
         ParamView{log_id_, "weight", weights_.span(), grad_w_.span(), out_features_,
-                  in_features_},
-        ParamView{log_id_, "bias", bias_.span(), grad_b_.span(), out_features_, 1},
+                  in_features_, trainable_},
+        ParamView{log_id_, "bias", bias_.span(), grad_b_.span(), out_features_, 1,
+                  trainable_},
     };
 }
 
 void DenseLayer::zero_grad() {
     grad_w_.fill(0.0);
     grad_b_.fill(0.0);
+}
+
+void DenseLayer::set_trainable(bool trainable) {
+    trainable_ = trainable;
+    if (!trainable_) {
+        zero_grad();
+    }
 }
 
 }  // namespace nn::core

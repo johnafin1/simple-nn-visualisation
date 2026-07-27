@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -191,6 +192,62 @@ TEST_CASE("primes split is deterministic for a seed and varies across seeds") {
           ids_of(Dataset::primes(b).split("train")));
     CHECK(ids_of(Dataset::primes(a).split("train")) !=
           ids_of(Dataset::primes(c).split("train")));
+}
+
+TEST_CASE("primes supports a stratified 60/20/20 split through 500") {
+    PrimesConfig cfg;
+    cfg.hi = 500;
+    cfg.unseen_lo = 1;
+    cfg.unseen_hi = 0;
+    cfg.train_fraction = 0.6;
+    cfg.validation_fraction = 0.2;
+    const Dataset d = Dataset::primes(cfg);
+
+    CHECK(d.split("train").count == 299);
+    CHECK(d.split("validation").count == 100);
+    CHECK(d.split("test").count == 100);
+
+    const auto count_primes = [](const nn::api::Split& split) {
+        return std::count_if(split.targets.begin(), split.targets.end(),
+                             [](double target) { return target > 0.5; });
+    };
+    CHECK(count_primes(d.split("train")) == 57);
+    CHECK(count_primes(d.split("validation")) == 19);
+    CHECK(count_primes(d.split("test")) == 19);
+}
+
+TEST_CASE("prime_residues uses the prime split and cyclic sin/cos targets") {
+    PrimesConfig cfg;
+    cfg.hi = 30;
+    cfg.unseen_lo = 1;
+    cfg.unseen_hi = 0;
+    cfg.train_fraction = 0.6;
+    cfg.validation_fraction = 0.2;
+    const std::vector<int> moduli{2, 3};
+    const Dataset d = Dataset::prime_residues(cfg, moduli);
+    CHECK(d.input_dim() == 9);
+    CHECK(d.output_dim() == 4);
+
+    bool checked_ten = false;
+    for (const auto& split : d.splits()) {
+        for (std::size_t i = 0; i < split.count; ++i) {
+            if (static_cast<int>(split.ids[i]) != 10) continue;
+            const auto target = split.target(i);
+            CHECK(target[0] == doctest::Approx(0.0).epsilon(1e-10));
+            CHECK(target[1] == doctest::Approx(1.0).epsilon(1e-10));
+            CHECK(target[2] == doctest::Approx(std::sin(20.0 * std::acos(-1.0) / 3.0)));
+            CHECK(target[3] == doctest::Approx(std::cos(20.0 * std::acos(-1.0) / 3.0)));
+            checked_ten = true;
+        }
+    }
+    CHECK(checked_ten);
+}
+
+TEST_CASE("prime split fractions must be valid") {
+    PrimesConfig cfg;
+    cfg.train_fraction = 0.9;
+    cfg.validation_fraction = 0.2;
+    CHECK_THROWS_AS(static_cast<void>(Dataset::primes(cfg)), std::invalid_argument);
 }
 
 TEST_CASE("split() throws for an unknown name") {

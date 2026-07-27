@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <string>
 
@@ -28,6 +29,15 @@ public:
     struct SplitMetrics {
         double loss = 0.0;
         double accuracy = 0.0;
+        double balanced_accuracy = 0.0;
+        double prime_recall = 0.0;
+        double composite_recall = 0.0;
+        double precision = 0.0;
+        std::size_t correct = 0;
+        std::size_t true_positive = 0;
+        std::size_t true_negative = 0;
+        std::size_t false_positive = 0;
+        std::size_t false_negative = 0;
     };
 
 private:

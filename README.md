@@ -1,50 +1,59 @@
 # simple-nn-visualisation
 
-A neural network built **from scratch in C++20** as a learning project, paired with a
-Python analysis track for **real-time visualisation** and **video generation** of training.
+A neural network built **from scratch in C++20** as a learning project, paired with Python tools
+for live inspection and visualisation.
 
-Everything that matters — forward pass, backpropagation, optimisers, initialisation,
-regularisation — is implemented by hand as functions we discuss and build together. No
-black-box ML frameworks in the core.
+Forward passes, backpropagation, losses, optimisers, initialisation, regularisation, dataset
+generation, and runtime JSON logging are implemented by hand. The C++ runtime library avoids
+third-party dependencies so the neural-network and systems mechanics remain visible; dependency
+management is reserved for build/test tooling such as doctest.
 
-> **Status:** Phase 0 — documentation and scaffolding. No application code yet.
+> **Status:** Phases 0-5 are complete. Grokking-oriented experiments are active, but no
+> successful grok has been observed yet. See [docs/STATUS.md](docs/STATUS.md).
 
-## The flagship experiment: grokking
+## The experiment focus: grokking
 
-Train a tiny MLP to regress `f(x) = x^2` on a small sample and keep training until it
-**groks** (sudden delayed generalisation, long after it has memorised the training set).
-We log richly enough to turn a run into graphs and a video. See
-[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
+The flagship experiment trains a tiny MLP on `f(x) = x^2` and watches for delayed
+generalisation. A second experiment tested primality with bit and one-hot encodings; both
+memorised and failed to generalise. Negative results are retained as learning outcomes rather
+than rewritten as successes.
+
+The current follow-up pretrains a wider shared encoder on unary modulo-residue targets for the
+small prime divisors needed through 500, freezes that encoder, and trains a class-balanced prime
+head. See [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) for the command, design, and evidence.
+Two-input modular addition remains a future textbook-grok comparison.
 
 ## Design at a glance
 
-- **Language:** C++20 core, Python 3.11 for analysis/video.
-- **Layered architecture:** a functional math layer, an object (OO) layer with polymorphism,
-  and an API-like utility layer that orchestrates runs. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-- **Logging is first-class:** components implement a `Loggable` abstract base and emit
-  structured **JSONL**, queryable with DuckDB/pandas. See [docs/LOGGING.md](docs/LOGGING.md).
-- **Parallel experiments:** runs are isolated by `run_id` so we can launch many configs at
-  once and compare them.
-- **CPU-first:** GPU/threading come later, behind a stable ops API.
+- **Language:** C++20 core; Python 3.11 for analysis and visualisation.
+- **Layered architecture:** functional math, OO domain objects, and thin API orchestration.
+- **Logging:** hand-written `JsonLine` plus buffered JSONL sinks; no third-party C++ JSON library.
+- **Current execution:** `Trainer` runs one isolated experiment at a time.
+- **Next phase:** design and implement parallel experiment orchestration.
+- **CPU-first:** threading/GPU remain optional future backends.
 
-## How we work (master & commander, but you steer)
+## How we work
 
-1. **Discuss** a technique in [docs/TECHNIQUES.md](docs/TECHNIQUES.md) — math + where it fits.
-2. **Confirm** the object structures / layout via mermaid diagrams before coding.
-3. **Implement** it together as named functions/classes.
-4. **Visualise** the result before moving on.
+1. Check [docs/STATUS.md](docs/STATUS.md) and the known
+   [rectifications](docs/RECTIFICATIONS.md).
+2. Discuss a technique in [docs/TECHNIQUES.md](docs/TECHNIQUES.md).
+3. Confirm object structures and file layout before coding.
+4. Implement and verify the agreed functions/classes.
+5. Visualise the result and update status/evidence.
 
 ## Documentation
 
 | Doc | What it covers |
 |-----|----------------|
-| [docs/SETUP.md](docs/SETUP.md) | Toolchain, CMake, dependencies, Python env, verify checklist |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, module boundaries, data flow |
-| [docs/CPP_CONVENTIONS.md](docs/CPP_CONVENTIONS.md) | Special member functions, polymorphism, per-layer paradigms |
-| [docs/LOGGING.md](docs/LOGGING.md) | `Loggable` contract, JSONL schema, run layout, querying, video |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Phased build plan with exit criteria |
-| [docs/TECHNIQUES.md](docs/TECHNIQUES.md) | Living catalogue of algorithms we implement |
-| [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Grokking `x^2` design + parallel comparison |
+| [docs/STATUS.md](docs/STATUS.md) | Canonical current phase, implemented capabilities, and next work |
+| [docs/RECTIFICATIONS.md](docs/RECTIFICATIONS.md) | Known gaps broken into tasks and acceptance criteria |
+| [docs/SETUP.md](docs/SETUP.md) | Toolchain, dependency policy, Python environment, and verification |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, module boundaries, data flow, and source layout |
+| [docs/CPP_CONVENTIONS.md](docs/CPP_CONVENTIONS.md) | Resource management, polymorphism, and per-layer conventions |
+| [docs/LOGGING.md](docs/LOGGING.md) | Implemented logging contract, schemas, limitations, and querying |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Phase order and exit criteria |
+| [docs/TECHNIQUES.md](docs/TECHNIQUES.md) | Living catalogue of hand-written algorithms |
+| [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Experiment designs, commands, and observed results |
 
 ## License
 

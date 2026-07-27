@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Status Check"
+  short_description: "Check and update the project canonical status"
+  default_prompt: "Use $project-status-check to verify the current phase, next work, and any required status updates."

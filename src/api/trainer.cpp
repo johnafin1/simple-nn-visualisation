@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -53,19 +54,99 @@ Tensor column_from(std::span<const double> row) {
     return t;
 }
 
+std::string safe_label(std::string_view value) {
+    std::string out;
+    out.reserve(value.size());
+    for (const unsigned char c : value) {
+        out.push_back(std::isalnum(c) || c == '-' || c == '_' ? static_cast<char>(c) : '_');
+    }
+    return out.empty() ? "train" : out;
+}
+
+void observe_classification(const Tensor& prediction, const Tensor& target,
+                            Trainer::SplitMetrics& metrics) {
+    bool all_right = true;
+    for (std::size_t k = 0; k < prediction.size(); ++k) {
+        if ((prediction.cspan()[k] >= 0.5) != (target.cspan()[k] >= 0.5)) {
+            all_right = false;
+            break;
+        }
+    }
+    if (all_right) ++metrics.correct;
+
+    if (prediction.size() != 1) return;
+    const bool predicted_prime = prediction.cspan()[0] >= 0.5;
+    const bool is_prime = target.cspan()[0] >= 0.5;
+    if (predicted_prime && is_prime) {
+        ++metrics.true_positive;
+    } else if (!predicted_prime && !is_prime) {
+        ++metrics.true_negative;
+    } else if (predicted_prime) {
+        ++metrics.false_positive;
+    } else {
+        ++metrics.false_negative;
+    }
+}
+
+void finish_metrics(Trainer::SplitMetrics& metrics, std::size_t count,
+                    bool classification, bool binary_classification) {
+    if (count == 0) return;
+    const double n = static_cast<double>(count);
+    metrics.loss /= n;
+    if (!classification) return;
+
+    metrics.accuracy = static_cast<double>(metrics.correct) / n;
+    if (!binary_classification) return;
+
+    const auto positive_total = metrics.true_positive + metrics.false_negative;
+    const auto negative_total = metrics.true_negative + metrics.false_positive;
+    const auto predicted_positive = metrics.true_positive + metrics.false_positive;
+    metrics.prime_recall =
+        positive_total == 0
+            ? 0.0
+            : static_cast<double>(metrics.true_positive) /
+                  static_cast<double>(positive_total);
+    metrics.composite_recall =
+        negative_total == 0
+            ? 0.0
+            : static_cast<double>(metrics.true_negative) /
+                  static_cast<double>(negative_total);
+    metrics.balanced_accuracy = 0.5 * (metrics.prime_recall + metrics.composite_recall);
+    metrics.precision =
+        predicted_positive == 0
+            ? 0.0
+            : static_cast<double>(metrics.true_positive) /
+                  static_cast<double>(predicted_positive);
+}
+
+void add_classification_metrics(JsonLine& line, const Trainer::SplitMetrics& metrics,
+                                bool binary_classification) {
+    line.add("accuracy", metrics.accuracy);
+    if (!binary_classification) return;
+    line.add("balanced_accuracy", metrics.balanced_accuracy)
+        .add("prime_recall", metrics.prime_recall)
+        .add("composite_recall", metrics.composite_recall)
+        .add("precision", metrics.precision)
+        .add("true_positive", metrics.true_positive)
+        .add("true_negative", metrics.true_negative)
+        .add("false_positive", metrics.false_positive)
+        .add("false_negative", metrics.false_negative);
+}
+
 }  // namespace
 
 Trainer::Trainer(nn::core::Network& net, nn::core::Loss& loss, nn::core::Optimizer& opt,
                  RunConfig cfg)
     : net_(net), loss_(loss), opt_(opt), cfg_(std::move(cfg)) {
-    run_id_ = timestamp_utc() + "_" + cfg_.name + "_" + short_hex(cfg_.seed);
+    run_id_ = cfg_.run_id.empty()
+                  ? timestamp_utc() + "_" + cfg_.name + "_" + short_hex(cfg_.seed)
+                  : cfg_.run_id;
 }
 
 Trainer::SplitMetrics Trainer::evaluate(const Split& split) {
     SplitMetrics m;
     if (split.count == 0) return m;
 
-    std::size_t correct = 0;
     for (std::size_t i = 0; i < split.count; ++i) {
         const Tensor x = column_from(split.input(i));
         const Tensor target = column_from(split.target(i));
@@ -74,19 +155,10 @@ Trainer::SplitMetrics Trainer::evaluate(const Split& split) {
 
         if (loss_.is_classification()) {
             const Tensor p = loss_.activate(y_hat);
-            bool all_right = true;
-            for (std::size_t k = 0; k < p.size(); ++k) {
-                if ((p.cspan()[k] >= 0.5) != (target.cspan()[k] >= 0.5)) {
-                    all_right = false;
-                    break;
-                }
-            }
-            if (all_right) ++correct;
+            observe_classification(p, target, m);
         }
     }
-    const auto n = static_cast<double>(split.count);
-    m.loss /= n;
-    m.accuracy = static_cast<double>(correct) / n;
+    finish_metrics(m, split.count, loss_.is_classification(), split.output_dim == 1);
     return m;
 }
 
@@ -94,28 +166,50 @@ std::filesystem::path Trainer::train(const Dataset& data) {
     const std::filesystem::path run_dir = cfg_.runs_dir / run_id_;
     std::filesystem::create_directories(run_dir);
 
-    // config.json + meta.json (start)
+    // One config per phase, plus config.json as the experiment-level entry point.
     {
         JsonLine line;
         line.add("run_id", std::string_view{run_id_})
             .add("name", std::string_view{cfg_.name})
+            .add("experiment", std::string_view{cfg_.experiment})
+            .add("phase", std::string_view{cfg_.phase})
+            .add("model", std::string_view{cfg_.model_description})
+            .add("loss_name", std::string_view{cfg_.loss_name})
+            .add("optimizer_name", std::string_view{cfg_.optimizer_name})
             .add("seed", static_cast<long long>(cfg_.seed))
             .add("lr", cfg_.lr)
             .add("weight_decay", cfg_.weight_decay)
             .add("steps", cfg_.steps)
+            .add("step_offset", cfg_.step_offset)
+            .add("total_steps", cfg_.total_experiment_steps > 0
+                                    ? cfg_.total_experiment_steps
+                                    : cfg_.steps)
+            .add("eval_interval", cfg_.eval_interval)
             .add("param_log_interval", cfg_.param_log_interval)
             .add("predict_interval", cfg_.predict_interval)
+            .add("flush_every", cfg_.flush_every)
+            .add("flush_interval_ms", cfg_.flush_interval_ms)
+            .add("positive_class_weight", cfg_.positive_class_weight)
+            .add("negative_class_weight", cfg_.negative_class_weight)
             .add("input_dim", data.input_dim())
             .add("output_dim", data.output_dim())
-            .add("classification", loss_.is_classification());
+            .add("phase_classification", loss_.is_classification())
+            .add("classification",
+                 loss_.is_classification() || cfg_.experiment_has_classification);
         // One size_<split> field per split keeps config.json flat and greppable.
         for (const Split& s : data.splits()) {
             line.add("size_" + s.name, s.count);
         }
-        std::ofstream cfg_file(run_dir / "config.json");
-        cfg_file << line.str() << '\n';
+        const std::string config_json = line.str();
+        std::ofstream phase_cfg_file(run_dir /
+                                     ("config_" + safe_label(cfg_.phase) + ".json"));
+        phase_cfg_file << config_json << '\n';
+        if (!cfg_.append_logs) {
+            std::ofstream cfg_file(run_dir / "config.json");
+            cfg_file << config_json << '\n';
+        }
     }
-    {
+    if (!cfg_.append_logs) {
         std::ofstream meta_file(run_dir / "meta.json");
         meta_file << JsonLine{}
                          .add("run_id", std::string_view{run_id_})
@@ -125,9 +219,12 @@ std::filesystem::path Trainer::train(const Dataset& data) {
                   << '\n';
     }
 
-    JsonlSink metrics(run_dir / "metrics.jsonl", cfg_.flush_every, cfg_.flush_interval_ms);
-    JsonlSink params_sink(run_dir / "params.jsonl", cfg_.flush_every, cfg_.flush_interval_ms);
-    JsonlSink preds(run_dir / "predictions.jsonl", cfg_.flush_every, cfg_.flush_interval_ms);
+    JsonlSink metrics(run_dir / "metrics.jsonl", cfg_.flush_every, cfg_.flush_interval_ms,
+                      cfg_.append_logs);
+    JsonlSink params_sink(run_dir / "params.jsonl", cfg_.flush_every,
+                          cfg_.flush_interval_ms, cfg_.append_logs);
+    JsonlSink preds(run_dir / "predictions.jsonl", cfg_.flush_every, cfg_.flush_interval_ms,
+                    cfg_.append_logs);
 
     const Split& train_split = data.split("train");
     const double inv_n =
@@ -146,26 +243,19 @@ std::filesystem::path Trainer::train(const Dataset& data) {
     const auto wall_start = std::chrono::steady_clock::now();
 
     for (int step = 0; step < cfg_.steps; ++step) {
+        const int global_step = cfg_.step_offset + step;
         net_.zero_grad();
 
-        double train_loss = 0.0;
-        std::size_t train_correct = 0;
+        SplitMetrics train_metrics;
         for (std::size_t i = 0; i < train_split.count; ++i) {
             const Tensor x = column_from(train_split.input(i));
             const Tensor target = column_from(train_split.target(i));
             const Tensor y_hat = net_.forward(x);
-            train_loss += loss_.value(y_hat, target);
+            train_metrics.loss += loss_.value(y_hat, target);
 
             if (loss_.is_classification()) {
                 const Tensor p = loss_.activate(y_hat);
-                bool all_right = true;
-                for (std::size_t k = 0; k < p.size(); ++k) {
-                    if ((p.cspan()[k] >= 0.5) != (target.cspan()[k] >= 0.5)) {
-                        all_right = false;
-                        break;
-                    }
-                }
-                if (all_right) ++train_correct;
+                observe_classification(p, target, train_metrics);
             }
 
             // Seed gradient scaled so the objective is the mean over the batch.
@@ -175,7 +265,8 @@ std::filesystem::path Trainer::train(const Dataset& data) {
             }
             net_.backward(g);
         }
-        train_loss *= inv_n;
+        finish_metrics(train_metrics, train_split.count, loss_.is_classification(),
+                       train_split.output_dim == 1);
 
         // Norms over the accumulated batch gradient / current weights.
         auto ps = net_.parameters();
@@ -198,16 +289,17 @@ std::filesystem::path Trainer::train(const Dataset& data) {
         {
             JsonLine line;
             line.add("run_id", std::string_view{run_id_})
-                .add("step", step)
+                .add("step", global_step)
+                .add("phase", std::string_view{cfg_.phase})
                 .add("split", std::string_view{"train"})
-                .add("loss", train_loss)
+                .add("loss", train_metrics.loss)
                 .add("lr", opt_.learning_rate())
                 .add("weight_norm", weight_norm)
                 .add("grad_norm", grad_norm)
                 .add("wall_ms", static_cast<long long>(wall_ms));
             if (loss_.is_classification()) {
-                line.add("accuracy",
-                         static_cast<double>(train_correct) * inv_n);
+                add_classification_metrics(line, train_metrics,
+                                           train_split.output_dim == 1);
             }
             metrics.write(line.str());
         }
@@ -220,11 +312,12 @@ std::filesystem::path Trainer::train(const Dataset& data) {
                 const SplitMetrics m = evaluate(s);
                 JsonLine line;
                 line.add("run_id", std::string_view{run_id_})
-                    .add("step", step)
+                    .add("step", global_step)
+                    .add("phase", std::string_view{cfg_.phase})
                     .add("split", std::string_view{s.name})
                     .add("loss", m.loss);
                 if (loss_.is_classification()) {
-                    line.add("accuracy", m.accuracy);
+                    add_classification_metrics(line, m, s.output_dim == 1);
                 }
                 metrics.write(line.str());
             }
@@ -238,7 +331,8 @@ std::filesystem::path Trainer::train(const Dataset& data) {
                     for (std::size_t c = 0; c < p.cols; ++c) {
                         const std::size_t idx = r * p.cols + c;
                         params_sink.write(JsonLine{}
-                                              .add("step", step)
+                                              .add("step", global_step)
+                                              .add("phase", std::string_view{cfg_.phase})
                                               .add("layer", std::string_view{p.layer})
                                               .add("kind", std::string_view{p.name})
                                               .add("row", r)
@@ -253,7 +347,7 @@ std::filesystem::path Trainer::train(const Dataset& data) {
 
         // Per-sample predictions: one row per sample per logged step, keyed by the
         // split's `id`. Same schema for every task, which is what lets one plotting
-        // script serve both the x^2 curve and the primes heatmap.
+        // script serve different sample-based diagnostics.
         if (cfg_.predict_interval > 0 &&
             (step % cfg_.predict_interval == 0 || step == cfg_.steps - 1)) {
             for (const Split* s : predict_targets) {
@@ -261,7 +355,8 @@ std::filesystem::path Trainer::train(const Dataset& data) {
                     const Tensor raw = net_.forward(column_from(s->input(i)));
                     const Tensor pred = loss_.activate(raw);
                     preds.write(JsonLine{}
-                                    .add("step", step)
+                                    .add("step", global_step)
+                                    .add("phase", std::string_view{cfg_.phase})
                                     .add("split", std::string_view{s->name})
                                     .add("id", s->ids[i])
                                     .add("target", s->target(i)[0])
@@ -276,7 +371,7 @@ std::filesystem::path Trainer::train(const Dataset& data) {
     params_sink.flush();
     preds.flush();
 
-    {
+    if (cfg_.finalize_run) {
         std::ofstream meta_file(run_dir / "meta.json");
         meta_file << JsonLine{}
                          .add("run_id", std::string_view{run_id_})

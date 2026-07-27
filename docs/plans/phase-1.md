@@ -1,5 +1,8 @@
 # Phase 1 Plan — Math Layer (`nn::math`)
 
+> Historical completed-phase plan. Use [../STATUS.md](../STATUS.md) for current state and
+> [../ROADMAP.md](../ROADMAP.md) for what comes next.
+
 **Goal:** implement the functional, pure math primitives the whole network builds on, each with
 unit tests and (where a gradient exists) a numeric gradient check. No objects/classes here —
 this layer is free functions only (see `docs/CPP_CONVENTIONS.md`).

@@ -97,6 +97,20 @@ TEST_CASE("weight decay shrinks an unconstrained weight towards zero over many s
     CHECK(dense.parameters()[0].values[0] < 0.05);
 }
 
+TEST_CASE("optimisers skip frozen parameter blocks") {
+    DenseLayer dense(1, 1, InitKind::Xavier, 3, "dense.0");
+    auto before = dense.parameters();
+    before[0].values[0] = 2.0;
+    before[0].grads[0] = 3.0;
+    dense.set_trainable(false);
+    auto frozen = dense.parameters();
+    REQUIRE_FALSE(frozen[0].trainable);
+
+    SgdWeightDecay opt(/*lr=*/0.5, /*lambda=*/0.25);
+    opt.step(frozen);
+    CHECK(frozen[0].values[0] == doctest::Approx(2.0));
+}
+
 TEST_CASE("one SGD step reduces a simple network's loss direction") {
     // Sanity: after computing grads and stepping, the same params moved opposite grad.
     Network net("network");

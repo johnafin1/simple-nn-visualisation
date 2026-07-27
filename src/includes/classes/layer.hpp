@@ -19,6 +19,7 @@ struct ParamView {
     std::span<double> grads;    // matching gradient buffer (dL/dparam per element)
     std::size_t rows = 0;
     std::size_t cols = 0;
+    bool trainable = true;      // false means optimisers must leave this block unchanged
 };
 
 // Abstract single-sample layer. forward() caches whatever backward() needs.

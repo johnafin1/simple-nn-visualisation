@@ -1,0 +1,2 @@
+add_executable(train_prime_transfer main.cpp)
+target_link_libraries(train_prime_transfer PRIVATE nn nn_warnings)

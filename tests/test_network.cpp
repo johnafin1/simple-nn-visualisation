@@ -1,5 +1,6 @@
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 #include <doctest/doctest.h>
@@ -92,4 +93,18 @@ TEST_CASE("Network zero_grad clears all layer gradients") {
     for (auto& p : net.parameters()) {
         for (double g : p.grads) CHECK(g == doctest::Approx(0.0));
     }
+}
+
+TEST_CASE("Network can replace its final transfer-learning head") {
+    Network net = make_net();
+    CHECK(net.num_layers() == 3);
+    net.remove_last();
+    CHECK(net.num_layers() == 2);
+    net.add(std::make_unique<DenseLayer>(4, 2, InitKind::Xavier, 33, "replacement_head"));
+    CHECK(net.forward(Tensor::column({0.5})).size() == 2);
+}
+
+TEST_CASE("Network remove_last rejects an empty network") {
+    Network net;
+    CHECK_THROWS_AS(net.remove_last(), std::out_of_range);
 }

@@ -54,4 +54,38 @@ void bce_with_logits_grad(std::span<const double> z, std::span<const double> y,
     }
 }
 
+double weighted_bce_with_logits(std::span<const double> z, std::span<const double> y,
+                                double positive_weight, double negative_weight) {
+    assert(z.size() == y.size() && "weighted_bce_with_logits: size mismatch");
+    assert(!z.empty() && "weighted_bce_with_logits: empty input");
+    assert(positive_weight > 0.0 && negative_weight > 0.0 &&
+           "weighted_bce_with_logits: weights must be positive");
+    double sum = 0.0;
+    for (std::size_t i = 0; i < z.size(); ++i) {
+        const double zi = z[i];
+        const double weight = y[i] >= 0.5 ? positive_weight : negative_weight;
+        const double element =
+            std::max(zi, 0.0) - zi * y[i] + std::log1p(std::exp(-std::abs(zi)));
+        sum += weight * element;
+    }
+    return sum / static_cast<double>(z.size());
+}
+
+void weighted_bce_with_logits_grad(std::span<const double> z, std::span<const double> y,
+                                   double positive_weight, double negative_weight,
+                                   std::span<double> grad_out) {
+    assert(z.size() == y.size() && "weighted_bce_with_logits_grad: size mismatch");
+    assert(z.size() == grad_out.size() &&
+           "weighted_bce_with_logits_grad: grad_out size mismatch");
+    assert(!z.empty() && "weighted_bce_with_logits_grad: empty input");
+    assert(positive_weight > 0.0 && negative_weight > 0.0 &&
+           "weighted_bce_with_logits_grad: weights must be positive");
+    sigmoid(z, grad_out);
+    const double inv_n = 1.0 / static_cast<double>(z.size());
+    for (std::size_t i = 0; i < z.size(); ++i) {
+        const double weight = y[i] >= 0.5 ? positive_weight : negative_weight;
+        grad_out[i] = weight * (grad_out[i] - y[i]) * inv_n;
+    }
+}
+
 }  // namespace nn::math

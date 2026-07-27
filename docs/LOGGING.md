@@ -1,159 +1,170 @@
 # Logging
 
-Logging is a **first-class citizen**. Anything worth observing during training implements the
-`Loggable` abstract base, and a sink writes structured **JSONL** (one JSON object per line) to
-per-run files. This makes runs queryable, comparable, and turnable into video.
+Logging is a first-class part of the training design. The current implementation uses
+hand-written `JsonLine` records and buffered `JsonlSink` files, keeping the C++ runtime free of a
+third-party JSON dependency.
 
-## The `Loggable` contract
+## Implemented contract
 
 ```mermaid
-classDiagram
-  class Loggable {
-    <<abstract>>
-    +to_json() Json
-    +log_name() string
-  }
-  class JsonlSink {
-    +write(record: Json)
-    +flush()
-  }
-  class Network
-  class Layer
-  class Trainer
-
-  Loggable <|-- Network
-  Loggable <|-- Layer
-  Loggable <|-- Trainer
-  Trainer --> JsonlSink : emits
+flowchart LR
+  Trainer["nn::api::Trainer"] --> Network["nn::core::Network::parameters()"]
+  Network --> Views["ParamView records"]
+  Trainer --> Builder["nn::log::JsonLine"]
+  Views --> Builder
+  Builder --> Metrics["JsonlSink: metrics.jsonl"]
+  Builder --> Params["JsonlSink: params.jsonl"]
+  Builder --> Predictions["JsonlSink: predictions.jsonl"]
 ```
 
-Sketch (subject to our Phase 3 discussion):
+The pieces have deliberately small responsibilities:
 
-```cpp
-class Loggable {
-public:
-  virtual ~Loggable() = default;
-  virtual std::string log_name() const = 0;   // stable identifier, e.g. "layer.dense.0"
-  virtual nlohmann::json to_json() const = 0;  // current state snapshot
-};
-```
+- `Loggable` is an abstract identity interface containing only `log_name()`.
+- `Network` and `DenseLayer` implement `Loggable`.
+- `Layer` and `Trainer` do not inherit `Loggable`.
+- `ParamView` exposes a named parameter block, its gradient span, and its shape.
+- `Trainer` decides when to evaluate and serialise current state.
+- `JsonLine` builds one JSON object string from the primitive types the project logs.
+- `JsonlSink` writes complete strings, adds the newline, buffers, and flushes by count/time.
 
-A component inherits `Loggable` and exposes its state; the `Trainer` decides *when* to pull and
-emit it (every step for scalars, every N steps for heavy per-param data).
+There is no `to_json()` virtual and no nlohmann/json dependency.
 
-## Run isolation (supports parallel experiments)
+## Run isolation
 
-Every run gets a unique `run_id` and its own directory, so parallel runs never collide:
+Every `Trainer` constructs a generated `run_id` and creates its own directory:
 
-```
+```text
 runs/
-  20260712T110000_x2grok_ab12cd/
-    config.json        # full RunConfig + git hash + seed
-    meta.json          # start/end time, host, status
-    metrics.jsonl      # per-step scalars (light, high frequency)
-    params.jsonl       # per-parameter snapshots (heavy, interval-gated)
-    predictions.jsonl  # sampled y vs y_hat for curve/video frames
+  <run_id>/
+    config.json
+    meta.json
+    metrics.jsonl
+    params.jsonl
+    predictions.jsonl
+    config_<phase>.json  # present for staged runs
 ```
+
+The directory is the isolation boundary. Independent runs do not share mutable sinks.
+
+### Current `config.json` and phase configs
+
+The current object contains:
+
+- `run_id`, `name`, `experiment`, `phase`, `seed`;
+- `lr`, `weight_decay`, `steps`;
+- `step_offset`, `total_steps`, and evaluation/parameter/prediction/flush cadences;
+- model/loss/optimiser descriptions and positive/negative class weights;
+- `input_dim`, `output_dim`, `classification`, and `phase_classification`;
+- one `size_<split>` field for each dataset split.
+
+The first phase writes `config.json`; every phase writes `config_<phase>.json`. Model topology
+is currently human-readable rather than a complete structured manifest, selected prediction
+splits are not persisted, and git revision/dirty-worktree state are absent. The remaining work
+is tracked as RECT-001 in [RECTIFICATIONS.md](RECTIFICATIONS.md).
+
+### Current `meta.json`
+
+At run start, the file contains `run_id`, `start`, and `"status":"running"`. At successful
+completion it is overwritten with `run_id`, `end`, and `"status":"done"`. The final file
+therefore does not preserve the start time or host, and interrupted/failed state is incomplete.
+RECT-002 tracks the lifecycle fix.
 
 ## Stream schemas
 
-Keeping streams separate is deliberate: `metrics.jsonl` stays small and fast to scan;
-`params.jsonl` (the big one) is only read when we actually need per-param detail.
+All stream records are one valid JSON object per line.
 
-### `metrics.jsonl` — one line per step
+### `metrics.jsonl`
 
-```json
-{"run_id":"...","step":1200,"epoch":6,"split":"train","loss":0.0123,"lr":0.01,"weight_norm":4.87,"grad_norm":0.31,"wall_ms":1543}
-```
-
-A matching line is emitted for **every non-train split** at `eval_interval` — `test` plus, for
-the primes experiment, `unseen_201_255` and `unseen_256_300`. Those extra lines carry only
-`loss` (and `accuracy`); `lr`, `weight_norm` and `grad_norm` describe the optimiser state and
-appear on the `train` row alone.
-
-For a **classification** run (`Loss::is_classification()`), every metrics line also carries
-`"accuracy"`. Regression runs omit the field entirely rather than logging a meaningless zero.
-
-### `params.jsonl` — per-parameter, interval-gated
-
-This is your "error/loss on every param during each round" stream. To keep it sane it is
-written every `param_log_interval` steps (configurable; can be 1 to capture every round).
+One training row is emitted every step:
 
 ```json
-{"run_id":"...","step":1200,"layer":"dense.0","kind":"weight","row":3,"col":5,"value":0.214,"grad":-0.0007}
+{"run_id":"...","step":1200,"phase":"prime_head","split":"train","loss":0.0123,"lr":0.01,"weight_norm":4.87,"grad_norm":0.31,"wall_ms":1543}
 ```
 
-One line per parameter per logged step. Long-format (one row per param) is intentional: it's the
-shape DuckDB/pandas want for grouping and time series.
-
-### `predictions.jsonl` — one row per sample per logged step
+Every non-train split is evaluated at `eval_interval` and on the final step:
 
 ```json
-{"step":1200,"split":"test","id":97,"target":1,"pred":0.83}
+{"run_id":"...","step":1200,"split":"test","loss":0.021}
 ```
 
-`id` is the sample's identity from its `Split` — the integer `n` for primes, the `x` value for
-`x^2` — and is the independent variable when plotting. `pred` is passed through
-`Loss::activate()`, so it is a probability for a classifier and the raw output for a regressor.
+Classification rows also contain `accuracy`. Regression rows omit it. Optimiser state/norm
+fields occur on the train row only. The current schema has no `epoch` field because training is
+step-based full-batch work.
 
-One schema for both tasks is what lets a single stream feed both the `x^2` prediction curve and
-the primes heatmap. Which splits get written is controlled by `RunConfig::predict_splits`
-(empty means all); `train_x2` narrows it to its dense `grid` split.
+Single-output classification rows additionally contain:
 
-## Volume and performance
+- `balanced_accuracy`, `prime_recall`, `composite_recall`, and `precision`;
+- `true_positive`, `true_negative`, `false_positive`, and `false_negative`.
 
-A 1->8->8->1 net has ~97 parameters. Logging every param every step for 100k steps is ~9.7M
-rows in `params.jsonl`. That's fine on disk (JSONL streams, no memory blowup) but:
+Staged experiments append their phases to the same file. `step` is the continuous global step
+and `phase` identifies which task/head produced the row.
 
-- **Buffer + flush:** `JsonlSink` buffers writes and flushes every `flush_interval` (also on a
-  timer) so the live Python plotter sees fresh data without us fsync-ing every line.
-- **Gate the heavy stream:** default `param_log_interval` > 1 for long runs; set to 1 when we
-  specifically want a per-round param movie.
-- **Promote to Parquet for repeated heavy analysis** (see below).
+### `params.jsonl`
+
+One row per parameter per logged step:
+
+```json
+{"step":1200,"phase":"prime_head","layer":"dense.0","kind":"weight","row":3,"col":5,"value":0.214,"grad":-0.0007}
+```
+
+Writes are gated by `param_log_interval`. The row currently has no `run_id`; its parent directory
+identifies the run.
+
+### `predictions.jsonl`
+
+One row per selected sample per logged step:
+
+```json
+{"step":1200,"phase":"prime_head","split":"test","id":97,"target":1,"pred":0.83}
+```
+
+`id` is the split's independent sample identity: the integer `n` for primes or the `x` value for
+`x^2`. `pred` is passed through `Loss::activate()`, producing classifier probability or raw
+regression output. `RunConfig::predict_splits` controls which splits are written; empty means
+all. These rows also rely on the parent directory for run identity.
+
+Whether to add `run_id` to every stream is tracked as RECT-003.
+
+## Volume and flushing
+
+A small network can still produce millions of long-format parameter rows. To keep logging usable:
+
+- `JsonlSink` buffers and flushes every configured record count.
+- It also flushes after `flush_interval_ms`, allowing live readers to see slow runs.
+- Destruction and explicit `flush()` write remaining rows.
+- `param_log_interval = 1` is reserved for deliberate per-step parameter traces.
+
+For repeated heavy analysis, generated parameter data can be promoted to Parquet.
 
 ## Querying
 
-### DuckDB (recommended)
-
-SQL directly over the files, no import step:
+Metrics can be safely queried across runs because each row carries `run_id`:
 
 ```sql
--- loss curves for every parallel run
 SELECT run_id, step, loss
 FROM 'runs/*/metrics.jsonl'
 WHERE split = 'test'
 ORDER BY run_id, step;
-
--- trajectory of a single weight over training (for a param-evolution video)
-SELECT step, value, grad
-FROM 'runs/20260712T110000_x2grok_ab12cd/params.jsonl'
-WHERE layer = 'dense.0' AND kind = 'weight' AND row = 3 AND col = 5
-ORDER BY step;
 ```
 
-For repeated heavy queries, convert once to Parquet (columnar, compressed, fast):
+Until RECT-003 is resolved, query parameter/prediction streams one run at a time or include the
+source filename so run identity is not lost:
 
 ```sql
-COPY (SELECT * FROM 'runs/<id>/params.jsonl')
-TO 'runs/<id>/params.parquet' (FORMAT parquet);
+SELECT filename, step, layer, kind, row, col, value, grad
+FROM read_json_auto('runs/*/params.jsonl', filename = true);
 ```
 
-### pandas / jq
+Pandas can read a single stream directly:
 
 ```python
 import pandas as pd
-m = pd.read_json("runs/<id>/metrics.jsonl", lines=True)
+
+metrics = pd.read_json("runs/<id>/metrics.jsonl", lines=True)
 ```
 
-```bash
-jq -c 'select(.split=="test") | {step, loss}' runs/<id>/metrics.jsonl
-```
+## Visualisation
 
-## Video pipeline (Python)
-
-1. Query per-step frames with DuckDB (loss curve so far + current prediction curve).
-2. Render each frame with matplotlib.
-3. Stitch with `imageio`/ffmpeg into `.mp4`.
-
-Because frames are reconstructed from logs, video generation is fully **post-hoc and
-reproducible** — rerun it any time, at any frame rate, without retraining.
+Implemented live tools are documented in [STATUS.md](STATUS.md). `make_video.py` and `query.py`
+belong to future Phase 7; the intended post-hoc pipeline is query logs, render frames, then stitch
+them with imageio/ffmpeg without retraining.

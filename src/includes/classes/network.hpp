@@ -19,6 +19,9 @@ public:
     explicit Network(std::string log_id = "network") : log_id_(std::move(log_id)) {}
 
     void add(std::unique_ptr<Layer> layer);
+    // Removes the final layer. Used by transfer experiments to replace a pretraining
+    // head while preserving the learned encoder.
+    void remove_last();
 
     Tensor forward(const Tensor& x);
     // Seeds backprop with grad_loss = dL/dy_hat and propagates to the input.

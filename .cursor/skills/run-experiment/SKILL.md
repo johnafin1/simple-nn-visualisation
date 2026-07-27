@@ -1,39 +1,34 @@
 ---
 name: run-experiment
-description: Set up, run, and compare training experiments in this repo, including launching multiple runs in parallel (e.g. weight-decay sweeps for grokking). Use when configuring an experiment, adding a run config, running a hyperparameter sweep, or comparing runs.
+description: Configure, run, inspect, and compare the currently implemented single-run x-squared, primality, and modulo-to-prime transfer experiments. Use when changing RunConfig values, launching train_x2, train_primes, or train_prime_transfer, checking run JSON/JSONL artefacts, comparing completed runs, or recording whether an experiment grokked. Do not assume the future ExperimentRunner exists.
 ---
 
 # Run an Experiment
 
-Experiments are defined by a `RunConfig` and executed via `nn::api::Trainer` /
-`ExperimentRunner`. Runs are isolated by `run_id` so many can run in parallel and be compared.
-See `docs/EXPERIMENTS.md`.
+Read `docs/STATUS.md`, then `docs/EXPERIMENTS.md`. The current repository has a single-run
+`nn::api::Trainer`; `ExperimentRunner` is Phase 6 and is not implemented.
 
 ## Single run
 
+```text
+- [ ] 1. Choose the implemented executable: train_x2, train_primes, or train_prime_transfer
+- [ ] 2. Set model and RunConfig values through its supported CLI
+- [ ] 3. Train; Trainer generates run_id and runs/<run_id>/
+- [ ] 4. Verify config.json, meta.json, and emitted JSONL are valid
+- [ ] 5. Inspect train and held-out behaviour
+- [ ] 6. Record material configuration and results in docs/EXPERIMENTS.md
 ```
-- [ ] 1. Define RunConfig: task, model dims, optimiser, lr, weight_decay, steps, seed, log intervals
-- [ ] 2. Assign a unique run_id -> runs/<run_id>/
-- [ ] 3. Train; emit metrics.jsonl (+ params.jsonl / predictions.jsonl per config)
-- [ ] 4. Verify logs are valid JSONL and loss behaves as expected
-```
 
-- Persist the full config + git hash + seed to `runs/<run_id>/config.json` for reproducibility.
-- Set `param_log_interval` appropriately: large for long runs; `1` only when a per-round
-  parameter movie is wanted (see logging rule / `docs/LOGGING.md`).
+- Seed all randomness and keep the seed in the run configuration.
+- Use a large `param_log_interval` for long runs; use `1` only for a per-step parameter trace.
+- `train_prime_transfer` appends modulo pretraining and frozen prime-head phases to one run
+  directory. Use balanced accuracy and both class recalls for its generalisation verdict.
+- `config.json` does not yet contain full model/source provenance. Do not claim a run is fully
+  reproducible until RECT-001 in `docs/RECTIFICATIONS.md` is complete.
 
-## Parallel sweep (compare configs)
+## Compare completed runs
 
-Use `ExperimentRunner` to launch several configs concurrently. Runs share nothing but the
-`runs/` root; each has its own directory.
-
-- Natural first sweep: **weight decay** for grokking (`0`, `1e-3`, `1e-2`, `1e-1`).
-- Other sweeps: learning rate, hidden width, train-set size.
-- Adding more runs later is free — just launch more.
-
-## Compare
-
-Query all runs at once with DuckDB, then plot (see visualise-training skill):
+Metrics rows carry `run_id`, so DuckDB can compare run directories:
 
 ```sql
 SELECT run_id, step, loss
@@ -42,8 +37,22 @@ WHERE split = 'test'
 ORDER BY run_id, step;
 ```
 
-## Grokking notes
+`params.jsonl` and `predictions.jsonl` do not currently carry `run_id`; derive identity from the
+file path or query one run directory at a time until RECT-003 is resolved.
 
-- Small train set + weight decay + long training are the key levers.
-- `x^2` may show gradual (not sharp) generalisation; if a textbook-sharp grok is needed, use the
-  modular-arithmetic fallback task documented in `docs/EXPERIMENTS.md`.
+## Grokking claims
+
+- No experiment in the project has produced a documented grok yet.
+- The original scratch primality experiments memorised and failed to generalise.
+- The modulo-to-prime transfer application is implemented, but no material long-run result is
+  documented yet.
+- Treat `x^2` as active empirical work and record negative results as well as promising ones.
+- Call a result a grok only when logs show delayed held-out generalisation after training fit.
+- Two-input modular addition is proposed but not implemented; do not confuse it with unary
+  modulo-residue pretraining.
+
+## Parallel work (future Phase 6)
+
+Do not call or create an `ExperimentRunner` as though its API were settled. Before implementing
+Phase 6, discuss concurrency, failure handling, provenance, and exact object/file structure with
+the user. Track the work in `docs/RECTIFICATIONS.md`.

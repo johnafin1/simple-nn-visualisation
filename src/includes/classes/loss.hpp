@@ -41,4 +41,23 @@ public:
     [[nodiscard]] bool is_classification() const override { return true; }
 };
 
+// BCE-with-logits with separate positive/negative class weights. This corrects
+// imbalanced binary datasets without changing their observed class distribution.
+class WeightedBceWithLogitsLoss final : public Loss {
+public:
+    WeightedBceWithLogitsLoss(double positive_weight, double negative_weight);
+
+    [[nodiscard]] double value(const Tensor& logits, const Tensor& y) const override;
+    [[nodiscard]] Tensor grad(const Tensor& logits, const Tensor& y) const override;
+    [[nodiscard]] Tensor activate(const Tensor& logits) const override;
+    [[nodiscard]] bool is_classification() const override { return true; }
+
+    [[nodiscard]] double positive_weight() const { return positive_weight_; }
+    [[nodiscard]] double negative_weight() const { return negative_weight_; }
+
+private:
+    double positive_weight_;
+    double negative_weight_;
+};
+
 }  // namespace nn::core

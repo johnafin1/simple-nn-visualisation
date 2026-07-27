@@ -7,14 +7,29 @@
 
 namespace nn::api {
 
-// Hyperparameters + logging cadence for a single training run. Everything the
-// Trainer needs to run and log a reproducible experiment.
+// Hyperparameters + logging cadence for a single training run or one phase of a
+// staged run. Full source/topology provenance remains tracked as a rectification.
 struct RunConfig {
     std::string name = "run";           // human tag, part of the run_id
+    // Empty creates a new id. A later training phase can reuse an existing id and
+    // append to the same run directory.
+    std::string run_id{};
+    std::string experiment{};           // multi-phase experiment name, when applicable
+    std::string phase = "train";        // label emitted on config/metric rows
+    std::string model_description{};    // human-readable topology/provenance
+    std::string loss_name{};
+    std::string optimizer_name{};
     std::uint64_t seed = 0;             // RNG seed for reproducibility
     double lr = 0.05;                   // learning rate
     double weight_decay = 0.0;          // L2 penalty, when using SgdWeightDecay
     int steps = 2000;                   // training steps (full-batch passes)
+    int step_offset = 0;                // global step offset for an appended phase
+    int total_experiment_steps = 0;      // zero means use `steps`
+    bool append_logs = false;
+    bool finalize_run = true;
+    bool experiment_has_classification = false;
+    double positive_class_weight = 1.0;
+    double negative_class_weight = 1.0;
 
     int eval_interval = 50;            // steps between non-train split metric rows
     int param_log_interval = 100;      // steps between params.jsonl snapshots (0 disables)

@@ -1,11 +1,19 @@
 #include "classes/network.hpp"
 
+#include <stdexcept>
 #include <utility>
 
 namespace nn::core {
 
 void Network::add(std::unique_ptr<Layer> layer) {
     layers_.push_back(std::move(layer));
+}
+
+void Network::remove_last() {
+    if (layers_.empty()) {
+        throw std::out_of_range("Network::remove_last: network is empty");
+    }
+    layers_.pop_back();
 }
 
 Tensor Network::forward(const Tensor& x) {

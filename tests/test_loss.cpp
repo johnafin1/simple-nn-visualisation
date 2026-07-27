@@ -12,6 +12,8 @@ using nn::math::bce_with_logits;
 using nn::math::bce_with_logits_grad;
 using nn::math::mse;
 using nn::math::mse_grad;
+using nn::math::weighted_bce_with_logits;
+using nn::math::weighted_bce_with_logits_grad;
 
 TEST_CASE("mse computes mean squared error") {
     // y_hat = {1,2,3}, y = {1,1,1} -> (0 + 1 + 4) / 3 = 5/3
@@ -106,6 +108,34 @@ TEST_CASE("bce_with_logits_grad matches the numeric gradient w.r.t. the logits")
         },
         z);
 
+    for (std::size_t i = 0; i < z.size(); ++i) {
+        CHECK(analytic[i] == doctest::Approx(numeric[i]).epsilon(1e-6));
+    }
+}
+
+TEST_CASE("weighted_bce_with_logits applies separate class weights") {
+    const std::array<double, 2> z{0.0, 0.0};
+    const std::array<double, 2> y{1.0, 0.0};
+    CHECK(weighted_bce_with_logits(z, y, 4.0, 1.0) ==
+          doctest::Approx(2.5 * std::log(2.0)));
+
+    std::array<double, 2> grad{};
+    weighted_bce_with_logits_grad(z, y, 4.0, 1.0, grad);
+    CHECK(grad[0] == doctest::Approx(-1.0));
+    CHECK(grad[1] == doctest::Approx(0.25));
+}
+
+TEST_CASE("weighted_bce_with_logits_grad matches its numeric gradient") {
+    const std::vector<double> z{0.4, -1.7, 3.2, -0.2};
+    const std::vector<double> y{1.0, 0.0, 1.0, 0.0};
+    std::array<double, 4> analytic{};
+    weighted_bce_with_logits_grad(z, y, 2.5, 0.6, analytic);
+
+    const auto numeric = nn::test::numeric_gradient(
+        [&y](std::span<const double> v) {
+            return weighted_bce_with_logits(v, std::span<const double>(y), 2.5, 0.6);
+        },
+        z);
     for (std::size_t i = 0; i < z.size(); ++i) {
         CHECK(analytic[i] == doctest::Approx(numeric[i]).epsilon(1e-6));
     }

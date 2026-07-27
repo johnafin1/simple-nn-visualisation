@@ -14,7 +14,8 @@ alwaysApply: false
 ## Special member functions (the big 6/7)
 
 - **Prefer Rule of Zero:** for types whose members are self-managing (`std::vector`, etc.),
-  declare none of the six special members.
+  declare none of the six special members. This is established modern-C++ guidance, not a new
+  C++20 rule; `Tensor` follows it because `std::vector` owns its storage.
 - **Rule of Five:** only for types that manually own a resource (e.g. a future GPU buffer) —
   then define dtor + both copy + both move ops. Mark moves `noexcept`.
 - Use `= default` / `= delete` to state intent. Never leave copy/move implicit on a
@@ -31,6 +32,7 @@ alwaysApply: false
 ## Layer paradigm
 
 - `nn::math`: free pure functions only — no classes/state.
-- `nn::core`/`nn::api`: OO. Objects call into `nn::math` for arithmetic.
+- `nn::core`/`nn::api`: OO. Objects call into `nn::math` for reusable numerical primitives;
+  small stateful operations tied to an object may stay with that object.
 
 Full detail + examples: `docs/CPP_CONVENTIONS.md`.

@@ -1,4 +1,5 @@
 #include <cmath>
+#include <stdexcept>
 
 #include <doctest/doctest.h>
 
@@ -8,6 +9,7 @@
 using nn::core::BceWithLogitsLoss;
 using nn::core::MseLoss;
 using nn::core::Tensor;
+using nn::core::WeightedBceWithLogitsLoss;
 
 TEST_CASE("MseLoss value matches mean squared error") {
     MseLoss loss;
@@ -52,4 +54,21 @@ TEST_CASE("BceWithLogitsLoss value and grad on logits") {
     CHECK(loss.value(logits, y) == doctest::Approx(std::log(2.0)));
     Tensor g = loss.grad(logits, y);
     CHECK(g.at(0, 0) == doctest::Approx(0.5 - 1.0));
+}
+
+TEST_CASE("WeightedBceWithLogitsLoss exposes weights and scales positive errors") {
+    WeightedBceWithLogitsLoss loss(4.0, 1.0);
+    CHECK(loss.is_classification());
+    CHECK(loss.positive_weight() == doctest::Approx(4.0));
+    CHECK(loss.negative_weight() == doctest::Approx(1.0));
+    const Tensor logits = Tensor::column({0.0});
+    const Tensor positive = Tensor::column({1.0});
+    CHECK(loss.value(logits, positive) == doctest::Approx(4.0 * std::log(2.0)));
+    CHECK(loss.grad(logits, positive).at(0, 0) == doctest::Approx(-2.0));
+    CHECK(loss.activate(logits).at(0, 0) == doctest::Approx(0.5));
+}
+
+TEST_CASE("WeightedBceWithLogitsLoss rejects non-positive weights") {
+    CHECK_THROWS_AS(WeightedBceWithLogitsLoss(0.0, 1.0), std::invalid_argument);
+    CHECK_THROWS_AS(WeightedBceWithLogitsLoss(1.0, -1.0), std::invalid_argument);
 }

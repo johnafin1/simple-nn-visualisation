@@ -1,5 +1,22 @@
 # Experiments
 
+## Current experiment status
+
+Grokking remains the active empirical focus, but **no successful grok has been observed yet**.
+
+- `x^2` is implemented and available for ongoing runs; no grokking result is currently
+  documented.
+- The primality bit/one-hot comparison is complete and produced memorisation without
+  generalisation.
+- The modulo-residue-to-prime transfer experiment is implemented and verified; its first
+  material long run is pending.
+- Two-input modular addition remains proposed, not implemented.
+- Parallel sweeps currently require separate single-run processes; the Phase 6
+  `ExperimentRunner` does not exist yet.
+
+Record material configurations and negative results as well as successes. A grokking claim
+requires logged evidence of delayed held-out generalisation after the training fit.
+
 ## Flagship: grokking `f(x) = x^2`
 
 ### Goal
@@ -34,7 +51,7 @@ already low, then drops sharply — delayed generalisation.
   regression lacks the sharp phase transition of algorithmic tasks), we document that and pivot
   the "sharp grok" demo to the fallback below. This is a learning outcome, not a failure.
 
-### Fallback for a textbook-sharp grok: modular arithmetic
+### Fallback for a textbook-sharp grok: modular addition
 
 Grokking was originally and most reliably shown on algorithmic tasks (Power et al., 2022), e.g.
 `(a + b) mod p` as classification. If we want the dramatic curve, we add a second experiment:
@@ -44,7 +61,9 @@ Grokking was originally and most reliably shown on algorithmic tasks (Power et a
 - Reuses the same `Trainer`, logging, and viz — only `Dataset` and the output head change.
 
 We lead with `x^2` (your stated interest, and a clean regression/visualisation story) and keep
-modular arithmetic ready as the guaranteed-grok comparison.
+two-input modular addition ready as the textbook-grok comparison. The implemented unary
+modulo-residue transfer experiment below is different: it tests whether arithmetic
+representations help primality rather than whether modular addition itself groks.
 
 ## Grokking experiment 2: primality on [2, 200]
 
@@ -147,7 +166,7 @@ All of it is now implemented:
 
 # watch either one live, or snapshot afterwards
 .\.venv\Scripts\python.exe src/app/python/primes_plot.py --live
-.\.venv\Scripts\python.exe src/app/python/live_plot.py --live
+.\.venv\Scripts\python.exe src/app/python/live_plot.py
 ```
 
 ### Actual results (Phase 5)
@@ -170,9 +189,10 @@ textbook overfitting signature, not a delayed-generalisation one. Weight norm pe
 improvement on any held-out split. Weight decay was doing its job; there was simply no
 generalising solution for it to find.
 
-The `onehot` heatmap is the cleanest teaching artefact: exactly the *training* primes turn red
-and every other row stays blue, so the model answers "composite" for all 99 test integers and
-lands precisely on the 76.8% base rate. The `bits` run looks superficially busier — it scatters
+The then-current `onehot` heatmap was the cleanest teaching artefact: exactly the *training*
+primes turned red and every other row stayed blue, so the model answered "composite" for all 99
+test integers and landed precisely on the 76.8% base rate. The `bits` run looked superficially
+busier — it scattered
 confident red rows across the held-out ranges — but those are false positives, which is why it
 scores *below* base rate on both unseen ranges.
 
@@ -184,13 +204,114 @@ set. Generalisation here does not arrive late — it departs early.
 
 This is the expectation in the honesty note above, confirmed. Primality has no compact circuit
 over bit inputs analogous to the Fourier features that make modular arithmetic grok, so the
-`bits` encoding gives the optimiser *possible* structure but not *learnable* structure. If we
-want to see a real grok, the modular-arithmetic experiment below is the one to run.
+`bits` encoding gives the optimiser *possible* structure but not *learnable* structure. The next
+implemented question is whether an explicitly learned modular representation transfers to prime
+generalisation; two-input modular addition remains the cleaner task if the sole goal is a
+textbook grok.
 
-## Parallel comparison runs
+## Experiment 3: modulo-residue pretraining transferred to primality
 
-Because runs are isolated by `run_id`, we launch several configs at once via
-`ExperimentRunner` and overlay them. Natural first sweep:
+- Status: **implemented and smoke-verified; long-run result pending**.
+- Executable: `train_prime_transfer`.
+
+### Question
+
+Can a shared encoder generalise primality better after first learning the periodic residue
+structure that a sieve uses, while a frozen-encoder phase prevents prime-label training from
+destroying that representation?
+
+This is a transfer-learning experiment. It may generalise immediately or gradually; only a
+substantially delayed held-out transition after the prime training fit should be called
+grokking.
+
+### Data
+
+- Integers `2..500`, encoded as 9 binary inputs.
+- Deterministic stratified `60/20/20` split:
+
+| Split | Samples | Primes | Composites |
+|---|---:|---:|---:|
+| `train` | 299 | 57 | 242 |
+| `validation` | 100 | 19 | 81 |
+| `test` | 100 | 19 | 81 |
+
+The same IDs belong to the same split in both phases. Residue pretraining uses only `train`;
+validation and test inputs therefore remain unseen by all optimisation.
+
+### Phase 1: cyclic residue representation
+
+- Encoder: `9 -> 64 -> tanh -> 64 -> tanh`.
+- Residue head: 16 linear outputs.
+- Moduli: `2, 3, 5, 7, 11, 13, 17, 19` — every possible prime divisor needed for composites up
+  to 500.
+- Targets for each modulus `q`:
+  `[sin(2*pi*n/q), cos(2*pi*n/q)]`.
+- Loss: MSE.
+- Optimiser: static-learning-rate SGD with weight decay.
+
+Sine/cosine represents the cyclic topology correctly: residue `0` and residue `q-1` are nearby
+on a circle rather than far apart scalar labels.
+
+### Phase 2: frozen class-balanced prime head
+
+- Remove the residue head.
+- Freeze both encoder dense layers. Frozen blocks still propagate input gradients but do not
+  accumulate parameter gradients and are skipped by SGD and weight decay.
+- Add a new `64 -> 1` linear prime head.
+- Loss: weighted BCE-with-logits.
+- Automatic normalised inverse-frequency weights:
+  `w_prime = N/(2*N_prime)` and `w_composite = N/(2*N_composite)`, approximately `2.623` and
+  `0.618` for the implemented split.
+
+### Generalisation evidence
+
+Every binary metrics row contains raw accuracy, balanced accuracy, prime recall, composite
+recall, precision, and TP/TN/FP/FN. Held-out metrics are emitted every 1000 steps in the
+recommended run.
+
+The dashboard uses conservative labels:
+
+- `MEMORISED, NOT GENERALISING`: train balanced accuracy is at least 98% while held-out remains
+  near 50%.
+- `PARTIALLY GENERALISING`: held-out balanced accuracy rises above chance.
+- `GENERALISING`: held-out balanced accuracy is at least 90%, both recalls are at least 80%, and
+  all three conditions persist for three evaluations.
+- `CANDIDATE GROKKING`: that sustained crossing occurs materially after the training fit.
+
+### Recommended long run
+
+```powershell
+.\build\src\app\train_prime_transfer\train_prime_transfer.exe `
+  --pretrain-steps 50000 --prime-steps 600000 `
+  --pretrain-lr 0.1 --prime-lr 0.5 `
+  --weight-decay 0.0003 --hidden 64 --seed 42 `
+  --eval-interval 1000 --param-log-interval 10000 `
+  --name prime_transfer_500
+```
+
+Watch the same run live in two more terminals:
+
+```powershell
+.\.venv\Scripts\python.exe src/app/python/primes_plot.py --live
+.\.venv\Scripts\python.exe src/app/python/live_plot.py
+```
+
+Both training phases append to one `runs/<run_id>/` directory with continuous global steps.
+`primes_plot.py` shows whole-run progress, generalisation metrics, the latest held-out confusion
+matrix, and the current status. `live_plot.py` retains the lower-level loss and norm view.
+
+### Controls and follow-ups
+
+Compare the result with scratch-trained width-32 and width-64 prime models before attributing any
+gain to transfer. If the frozen linear head cannot fit, the next controlled follow-up is to
+unfreeze only the upper encoder layer at a smaller static learning rate; do not silently change
+that variable inside this baseline.
+
+## Planned Phase 6: parallel comparison runs
+
+Runs are already isolated by `run_id`, but the orchestration layer is not implemented. Phase 6
+will design `ExperimentRunner`, launch several configurations concurrently, and overlay their
+results. A natural first sweep:
 
 ```mermaid
 flowchart LR
@@ -209,15 +330,15 @@ flowchart LR
 - Comparison plot: overlay `test loss` vs `step` (log x-axis) for all runs, pulled with one
   DuckDB query over `runs/*/metrics.jsonl`.
 
-Adding more runs later is free — just launch more; nothing needs restructuring.
+The isolation layout is ready for this work, but provenance/metadata rectifications should be
+completed before relying on large parallel comparisons.
 
 ## Outputs
 
-- **Prediction heatmap** (`src/app/python/primes_plot.py`, Phase 5): one row per integer, one
-  column per logged step, colour = `P(prime)`, with ground-truth and split-membership gutters
-  down the left. This is the view that makes memorisation legible at a glance — train rows
-  converge to the correct colour while held-out rows do not. Supports `--live` and `--snapshot`.
-- Live loss curve during training (Phase 4).
-- Post-hoc `.mp4`: loss curves + evolving prediction curve overlaid on the true `x^2`.
-- Optional per-parameter evolution video from `params.jsonl`.
-- Comparison figures across parallel runs.
+- **Prime generalisation dashboard** (`src/app/python/primes_plot.py`): scalable whole-run
+  progress, phase/split loss, balanced accuracy, per-class recall, confusion matrix, and
+  conservative generalisation/grokking status. Supports `--live` and `--snapshot`.
+- **Live loss curve** (`src/app/python/live_plot.py`, Phase 4): implemented.
+- **Post-hoc `.mp4`** from loss/prediction logs: planned for Phase 7.
+- **Per-parameter evolution video** from `params.jsonl`: optional Phase 7 work.
+- **Comparison figures across parallel runs:** planned for Phase 6.

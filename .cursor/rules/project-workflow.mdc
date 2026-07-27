@@ -11,11 +11,12 @@ mechanics deeply. Act as lead engineer, but keep the user **heavily involved**.
 
 ## The loop (every technique/feature)
 
-1. **Discuss** the technique first — math + where it fits. Capture it in `docs/TECHNIQUES.md`.
-2. **Confirm** structures before coding: propose folder/file layout and object structures with
+1. **Check status** in `docs/STATUS.md`; distinguish current, rectification, and future work.
+2. **Discuss** the technique first — math + where it fits. Capture it in `docs/TECHNIQUES.md`.
+3. **Confirm** structures before coding: propose folder/file layout and object structures with
    **mermaid diagrams**, and get explicit sign-off.
-3. **Implement** together as named functions/classes we agreed on.
-4. **Visualise** the result before moving on.
+4. **Implement** together as named functions/classes we agreed on.
+5. **Visualise** the result and update status before moving on.
 
 ## Hard rules
 
@@ -23,12 +24,17 @@ mechanics deeply. Act as lead engineer, but keep the user **heavily involved**.
   one's exit criteria are met and the user signs off.
 - Do NOT introduce black-box ML frameworks in the C++ core. Every training technique
   (forward, backprop, optimisers, init, regularisation) is hand-written.
+- Keep the C++ runtime library free of third-party dependencies. Dependency management for
+  build/test tooling is allowed when it does not hide neural-network mechanics.
 - Before writing a new class or module, present the object structure (mermaid `classDiagram`
   or `flowchart`) and wait for confirmation.
 - When adding a technique, update `docs/TECHNIQUES.md` status (`planned` -> `discussed` ->
   `implemented`).
+- When current capabilities, experiment evidence, or next work changes, update
+  `docs/STATUS.md`; log known gaps in `docs/RECTIFICATIONS.md`.
 
 ## Reference docs
 
-`README.md`, `docs/ARCHITECTURE.md`, `docs/CPP_CONVENTIONS.md`, `docs/LOGGING.md`,
-`docs/ROADMAP.md`, `docs/TECHNIQUES.md`, `docs/EXPERIMENTS.md`.
+`README.md`, `docs/STATUS.md`, `docs/RECTIFICATIONS.md`, `docs/ARCHITECTURE.md`,
+`docs/CPP_CONVENTIONS.md`, `docs/LOGGING.md`, `docs/ROADMAP.md`, `docs/TECHNIQUES.md`,
+`docs/EXPERIMENTS.md`.

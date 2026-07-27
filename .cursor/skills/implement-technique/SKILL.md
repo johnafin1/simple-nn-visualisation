@@ -47,6 +47,8 @@ Follow this loop for any new/changed NN technique. Do not skip steps or jump pha
 
 - Ensure the technique's effect is observable via logs (see the visualise-training skill).
 - Flip `docs/TECHNIQUES.md` status to `implemented`.
+- Update `docs/STATUS.md` if the capability, active phase, or immediate next work changed.
+- Close or add `docs/RECTIFICATIONS.md` items as needed.
 
 ## Guardrails
 

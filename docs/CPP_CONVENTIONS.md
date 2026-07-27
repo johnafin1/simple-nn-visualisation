@@ -26,6 +26,8 @@ public:
 - **Rule of Zero (default, prefer this):** if your members are all self-managing types
   (`std::vector`, `std::string`, smart pointers), declare *none* of the six. The compiler-
   generated ones are correct. Most of our classes (`Tensor`, `Network`, layers) aim for this.
+  The name is established modern-C++ guidance (popularised in the C++11 era), not a new C++20
+  language feature.
 - **Rule of Five:** if you manually manage a resource (raw buffer, GPU handle later), you must
   define all five (dtor + both copies + both moves). We expect to hit this only for a future
   GPU buffer type.
@@ -62,7 +64,7 @@ We use runtime polymorphism where the set of variants is open and selected at ru
 | `nn::math` | Functional (free, pure functions) | Reusable, testable, parallelisable; no state to reason about |
 | `nn::core` | OO + runtime polymorphism | Open-ended families (layers/losses/optimisers), shared behaviour via bases |
 | `nn::api` | OO orchestration, thin | Stable surface for experiments; composes core objects |
-| `nn::log` | OO interface (abstract base) | `Loggable` is a cross-cutting contract implemented widely |
+| `nn::log` | Identity + output utilities | `Loggable` supplies stable IDs; `JsonLine`/`JsonlSink` emit hand-written JSONL |
 
 ## General style
 
@@ -75,3 +77,11 @@ We use runtime polymorphism where the set of variants is open and selected at ru
   mirrored `src/{helpers,classes,api}/`. Header-only only for tiny inline utilities.
 - Errors: exceptions for programmer/setup errors; return values/status for expected control
   flow in hot loops.
+
+## Project dependency preference
+
+- Keep the C++ runtime library free of third-party dependencies so NN and systems mechanics stay
+  visible.
+- Build/test dependency management is allowed when it does not hide runtime behaviour; doctest
+  is currently fetched by CMake for tests.
+- Discuss any proposed runtime dependency with the user before adding it.

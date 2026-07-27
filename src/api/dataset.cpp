@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
+#include <numbers>
 #include <numeric>
 #include <random>
 #include <stdexcept>
@@ -130,6 +132,12 @@ Dataset Dataset::x_squared(int n_train, int n_test, std::uint64_t seed, int n_gr
 }
 
 Dataset Dataset::primes(const PrimesConfig& cfg) {
+    if (cfg.train_fraction < 0.0 || cfg.validation_fraction < 0.0 ||
+        cfg.train_fraction + cfg.validation_fraction > 1.0) {
+        throw std::invalid_argument(
+            "Dataset::primes: train and validation fractions must fit in [0, 1]");
+    }
+
     Dataset d;
     const int sieve_max = std::max(cfg.hi, cfg.unseen_hi);
     const std::vector<bool> is_prime = prime_sieve(sieve_max);
@@ -151,22 +159,39 @@ Dataset Dataset::primes(const PrimesConfig& cfg) {
     std::shuffle(composites_pool.begin(), composites_pool.end(), rng);
 
     std::vector<int> train_numbers;
+    std::vector<int> validation_numbers;
     std::vector<int> test_numbers;
     const auto take = [&](const std::vector<int>& pool) {
-        const auto n_train = static_cast<std::size_t>(
-            static_cast<double>(pool.size()) * cfg.train_fraction + 0.5);
+        const auto rounded_count = [&pool](double fraction) {
+            return static_cast<std::size_t>(
+                static_cast<double>(pool.size()) * fraction + 0.5);
+        };
+        const std::size_t n_train = std::min(rounded_count(cfg.train_fraction), pool.size());
+        const std::size_t available = pool.size() - n_train;
+        const std::size_t n_validation =
+            std::min(rounded_count(cfg.validation_fraction), available);
         for (std::size_t i = 0; i < pool.size(); ++i) {
-            (i < n_train ? train_numbers : test_numbers).push_back(pool[i]);
+            if (i < n_train) {
+                train_numbers.push_back(pool[i]);
+            } else if (i < n_train + n_validation) {
+                validation_numbers.push_back(pool[i]);
+            } else {
+                test_numbers.push_back(pool[i]);
+            }
         }
     };
     take(primes_pool);
     take(composites_pool);
 
-    // Sort so logs and heatmap rows come out in integer order.
+    // Sort so logs and diagnostic rows come out in integer order.
     std::sort(train_numbers.begin(), train_numbers.end());
+    std::sort(validation_numbers.begin(), validation_numbers.end());
     std::sort(test_numbers.begin(), test_numbers.end());
 
     d.add(make_prime_split("train", train_numbers, is_prime, cfg));
+    if (!validation_numbers.empty()) {
+        d.add(make_prime_split("validation", validation_numbers, is_prime, cfg));
+    }
     d.add(make_prime_split("test", test_numbers, is_prime, cfg));
 
     // Unseen ranges only exist for Bits: one-hot has no input slot for integers
@@ -191,6 +216,35 @@ Dataset Dataset::primes(const PrimesConfig& cfg) {
                 "unseen_" + std::to_string(beyond.front()) + "_" +
                     std::to_string(beyond.back()),
                 beyond, is_prime, cfg));
+        }
+    }
+    return d;
+}
+
+Dataset Dataset::prime_residues(const PrimesConfig& cfg, std::span<const int> moduli) {
+    if (moduli.empty()) {
+        throw std::invalid_argument("Dataset::prime_residues: moduli must not be empty");
+    }
+    for (const int q : moduli) {
+        if (q <= 1) {
+            throw std::invalid_argument("Dataset::prime_residues: every modulus must exceed 1");
+        }
+    }
+
+    Dataset d = Dataset::primes(cfg);
+    d.output_dim_ = moduli.size() * 2;
+    for (Split& split : d.splits_) {
+        split.output_dim = d.output_dim_;
+        split.targets.clear();
+        split.targets.reserve(split.count * split.output_dim);
+        for (const double id : split.ids) {
+            const double n = id;
+            for (const int q : moduli) {
+                const double angle =
+                    2.0 * std::numbers::pi_v<double> * n / static_cast<double>(q);
+                split.targets.push_back(std::sin(angle));
+                split.targets.push_back(std::cos(angle));
+            }
         }
     }
     return d;

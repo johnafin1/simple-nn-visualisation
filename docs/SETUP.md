@@ -1,72 +1,83 @@
 # Setup
 
-Target platform for now: **Windows + MinGW (MSYS2)**, which is what's installed. Everything is
-chosen to stay portable (Linux/macOS later) since nothing here is Windows-specific.
+Target platform for now: **Windows + MinGW (MSYS2)**. The source remains portable because the
+C++ library does not depend on Windows-specific APIs.
 
-## What's already present
+## Verified toolchain
 
-- `g++` 13.1.0 at `C:\msys64\mingw64\bin\g++.exe` (MSYS2 MinGW-w64). Supports C++20.
+As of 2026-07-26:
+
+- `g++` 13.1.0 from MSYS2 MinGW-w64.
+- CMake 3.26.4.
+- Ninja 1.11.1.
 - Python 3.11.3.
-
-## What we need to add
-
-### 1. CMake
-
-Not currently on `PATH`. The repo's `.gitignore` already assumes a CMake + vcpkg workflow.
-
-Install via MSYS2 (keeps it in the same toolchain as g++):
-
-```bash
-pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
-```
-
-Or via winget:
-
-```powershell
-winget install Kitware.CMake
-```
 
 Ensure `C:\msys64\mingw64\bin` is on `PATH` so `g++`, `cmake`, and `ninja` resolve.
 
-### 2. C++ standard and compiler
+If installing a new environment through MSYS2:
 
-- **Standard: C++20** (`-std=c++20`). We use `std::span`, designated initialisers, and
-  possibly concepts.
-- Generator: **Ninja** with the MinGW g++ toolchain.
+```bash
+pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
+```
 
-### 3. JSON dependency
+## C++ dependency policy
 
-Logging emits JSON, so we need a JSON library. Decision: **nlohmann/json** (header-only,
-ergonomic). Managed via **vcpkg** (manifest mode, `vcpkg.json`) to match the `.gitignore`.
+The `nn` runtime library intentionally has **no third-party C++ dependencies**. Neural-network
+math, backpropagation, optimisers, datasets, and JSON/JSONL logging are implemented in this
+repository for learning and transparency.
 
-We will add the actual `vcpkg.json` when we start Phase 3 (logging). For now this is just the
-recorded decision.
+Library/dependency management is still acceptable where it supports the project without hiding
+NN behaviour:
 
-### 4. Python environment (analysis + video)
+- CMake uses `FetchContent` to obtain doctest for the test executable.
+- Standard-library facilities are used throughout the runtime.
+- A future optional backend may introduce a dependency only after explicit design discussion.
+
+There is no `vcpkg.json` and no nlohmann/json dependency. `JsonLine` and `JsonlSink` provide the
+small JSON surface the project currently needs.
+
+## Configure, build, and test
+
+```powershell
+cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=g++
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+The generated `build/` directory is gitignored.
+
+## Python environment
+
+Create an isolated environment and install the analysis dependencies:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install numpy pandas matplotlib duckdb imageio imageio-ffmpeg
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
-- `duckdb` — SQL over our JSONL logs, no import step.
-- `pandas` / `numpy` — ad-hoc analysis.
-- `matplotlib` — plots and live figures.
-- `imageio` + `imageio-ffmpeg` — stitch frames into `.mp4`.
+Runtime analysis packages include DuckDB, pandas, NumPy, matplotlib, imageio, and ffmpeg support.
+The development requirements add Streamlit and watchdog for the test dashboard.
 
-A `requirements.txt` will accompany the first Python script.
+Both `.venv/` and generated run/analysis artefacts are gitignored.
 
 ## Verify checklist
 
 ```powershell
-g++ --version        # expect 13.x, C++20 capable
-cmake --version      # after install
-ninja --version      # after install
-python --version     # expect 3.11.x
+g++ --version
+cmake --version
+ninja --version
+python --version
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 ## Not assumed
 
-- **No CUDA / GPU.** `nvidia-smi` and `nvcc` are not present. GPU is a later, optional backend
-  behind the ops API (see [ARCHITECTURE.md](ARCHITECTURE.md)); we will not depend on it.
+- No CUDA/GPU toolchain.
+- No black-box C++ ML framework.
+- No third-party C++ JSON library.
+
+GPU or other compute backends remain optional future implementations behind the math boundary;
+see [ARCHITECTURE.md](ARCHITECTURE.md) and [STATUS.md](STATUS.md).

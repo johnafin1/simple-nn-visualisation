@@ -26,4 +26,17 @@ void mse_grad(std::span<const double> y_hat, std::span<const double> y,
 void bce_with_logits_grad(std::span<const double> z, std::span<const double> y,
                           std::span<double> grad_out);
 
+// Class-weighted BCE-with-logits. A positive example contributes positive_weight
+// times the ordinary BCE term; a negative example contributes negative_weight times
+// it. The result remains averaged over the N outputs.
+[[nodiscard]] double weighted_bce_with_logits(std::span<const double> z,
+                                              std::span<const double> y,
+                                              double positive_weight,
+                                              double negative_weight);
+
+// dL/dz[i] = class_weight(y[i]) * (sigmoid(z[i]) - y[i]) / N.
+void weighted_bce_with_logits_grad(std::span<const double> z, std::span<const double> y,
+                                   double positive_weight, double negative_weight,
+                                   std::span<double> grad_out);
+
 }  // namespace nn::math

@@ -48,6 +48,9 @@ struct PrimesConfig {
     int unseen_lo = 201;     // first integer of the unseen evaluation range
     int unseen_hi = 300;     // last integer of the unseen evaluation range
     double train_fraction = 0.5;
+    // Optional stratified validation slice. The remainder after train and validation
+    // becomes test. Zero preserves the original train/test behaviour.
+    double validation_fraction = 0.0;
     std::uint64_t seed = 0;
     PrimeEncoding encoding = PrimeEncoding::Bits;
     // Input width for Bits. Must cover unseen_hi (9 bits reaches 511) so the same
@@ -70,6 +73,13 @@ public:
     // [unseen_lo, unseen_hi]. OneHot produces no unseen splits: those integers have no
     // input slot, which is precisely why that encoding cannot generalise.
     [[nodiscard]] static Dataset primes(const PrimesConfig& cfg);
+
+    // Same deterministic integer splits and input encoding as primes(), but each
+    // target contains sin/cos residue pairs for the supplied moduli:
+    // [sin(2*pi*n/q), cos(2*pi*n/q)] for every q. This is the representation-
+    // pretraining task used before fitting the prime classifier.
+    [[nodiscard]] static Dataset prime_residues(const PrimesConfig& cfg,
+                                                std::span<const int> moduli);
 
     [[nodiscard]] const std::vector<Split>& splits() const { return splits_; }
     // Throws std::out_of_range if absent.

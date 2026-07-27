@@ -17,7 +17,7 @@ namespace nn::log {
 class JsonlSink {
 public:
     explicit JsonlSink(std::filesystem::path file, std::size_t flush_every = 256,
-                       int flush_interval_ms = 250);
+                       int flush_interval_ms = 250, bool append = false);
     ~JsonlSink();
 
     JsonlSink(const JsonlSink&) = delete;
